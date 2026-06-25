@@ -69,7 +69,7 @@ func (c *Context) GetGormDB() *gorm.DB {
 // GetDBByPackagePath 已废弃。应用业务数据库是 MySQL-only，并且必须依赖当前请求或回调的
 // package-scoped capability；无 Context 的后台入口不能直接获取业务库连接。
 func GetDBByPackagePath(packagePath string) (*gorm.DB, error) {
-	return nil, errors.New("KageOS app business database is MySQL-only and requires request Context capability; use ctx.GetGormDB() inside handlers/callbacks")
+	return nil, errors.New("Kageos app business database is MySQL-only and requires request Context capability; use ctx.GetGormDB() inside handlers/callbacks")
 }
 
 func getOrInitMySQLDB(packagePath string, capability *dto.AppDBCapability) (*gorm.DB, error) {
@@ -171,7 +171,7 @@ func resolveMySQLDSNEndpoint(dsn string) (string, error) {
 		return "", fmt.Errorf("resolve runtime MySQL endpoint %s: %w", cfg.Addr, err)
 	}
 	if resolved != cfg.Addr {
-		logger.Infof(context.Background(), "MySQL endpoint auto-resolved: %s -> %s", cfg.Addr, resolved)
+		logger.Debugf(context.Background(), "MySQL endpoint auto-resolved: %s -> %s", cfg.Addr, resolved)
 	}
 	mysqlEndpointCache.Store(cfg.Addr, resolved)
 	cfg.Addr = resolved
@@ -215,7 +215,7 @@ func configureMySQLConnectionPool(db *gorm.DB, resp *dto.AppDBResolveResp) error
 	sqlDB.SetConnMaxIdleTime(idleTime)
 	sqlDB.SetConnMaxLifetime(lifetime)
 
-	logger.Infof(context.Background(), "MySQL 数据库连接池已配置: MaxOpenConns=%d, MaxIdleConns=%d, MaxIdleTime=%v, MaxLifetime=%v",
+	logger.Debugf(context.Background(), "MySQL 数据库连接池已配置: MaxOpenConns=%d, MaxIdleConns=%d, MaxIdleTime=%v, MaxLifetime=%v",
 		maxOpenConns, maxIdleConns, idleTime, lifetime)
 	return nil
 }
@@ -248,7 +248,7 @@ func cleanupIdleDatabases() {
 			continue
 		}
 		delete(dbs, key)
-		logger.Infof(context.Background(), "空闲数据库连接已释放: %s", key)
+		logger.Debugf(context.Background(), "空闲数据库连接已释放: %s", key)
 	}
 }
 

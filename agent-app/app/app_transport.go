@@ -79,7 +79,7 @@ func (t *AppTransport) PublishMessageCommand(ctx context.Context, envelope *dto.
 	if err := t.conn.PublishMsg(msg); err != nil {
 		return fmt.Errorf("publish message command to %s: %w", subjects.MessageSendCommandSubject, err)
 	}
-	logger.Infof(ctx, "[PublishMessage] published async to %s, from=%s full_code_path=%s to_users=%s title=%s",
+	logger.Debugf(ctx, "[PublishMessage] published async to %s, from=%s full_code_path=%s to_users=%s title=%s",
 		subjects.MessageSendCommandSubject, envelope.Meta.From, envelope.Meta.FullCodePath, envelope.Message.ToUsers, envelope.Message.Title)
 	return nil
 }
@@ -180,7 +180,7 @@ func (t *AppTransport) publishLifecycleEvent(messageType string, data map[string
 		return fmt.Errorf("publish lifecycle event %s to %s: %w", messageType, t.subjects.LifecycleEvent, err)
 	}
 
-	logger.Infof(context.Background(), "Lifecycle event %s sent to subject: %s", messageType, t.subjects.LifecycleEvent)
+	logger.Debugf(context.Background(), "Lifecycle event %s sent to subject: %s", messageType, t.subjects.LifecycleEvent)
 	return nil
 }
 

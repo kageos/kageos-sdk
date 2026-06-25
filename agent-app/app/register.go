@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/kageos/kageos-sdk/agent-app/callback"
@@ -14,9 +15,10 @@ import (
 )
 
 type PackageContext struct {
-	RouterGroup string `json:"router_group"`
-	Name        string `json:"name,omitempty"` // 包名称（可选）
-	Desc        string `json:"desc,omitempty"` // 包描述（可选）
+	RouterGroup string      `json:"router_group"`
+	Name        string      `json:"name,omitempty"` // 包名称（可选）
+	Desc        string      `json:"desc,omitempty"` // 包描述（可选）
+	AgentTasks  []AgentTask `json:"agent_tasks,omitempty"`
 }
 
 // RegisterOptions 路由注册选项
@@ -154,7 +156,7 @@ type CallbackRouterReq struct {
 func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 	var req CallbackRouterReq
 	if err := json.Unmarshal(ctx.body, &req); err != nil {
-		logger.Errorf(ctx, "CallbackRouter Unmarshal body:%s err: %v", ctx.body, err)
+		logger.Errorf(ctx, "CallbackRouter unmarshal failed: bodyLen=%d err=%v", len(ctx.body), err)
 		return err
 	}
 
@@ -171,6 +173,25 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 	ctx.routerInfo = router
 
 	switch req.Type {
+	case CallbackTypeSystemTableGetRows:
+		v, ok := router.Template.(*TableTemplate)
+		if !ok {
+			return errors.New("invalid type of TableTemplate")
+		}
+		var onTableReq callback.TableGetRowsReq
+		if err := json.Unmarshal(ctx.body, &onTableReq); err != nil {
+			return err
+		}
+		onTableResp, err := handleSystemTableGetRows(ctx, v, &onTableReq)
+		if err != nil {
+			return err
+		}
+		if err := resp.Form(onTableResp).Build(); err != nil {
+			logger.Errorf(ctx, "callback %s router:%s error:%s", req.Type, req.Router, err.Error())
+			return err
+		}
+		logger.Debugf(ctx, "CallbackRouter %s success", req.Type)
+		return nil
 	case CallbackTypeOnTableAddRow:
 		v, ok := router.Template.(*TableTemplate)
 		if !ok {
@@ -190,7 +211,7 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 			logger.Errorf(ctx, "callback onTableAddRow  router:%s Build error:%s", req.Type, err.Error())
 			return err
 		}
-		logger.Infof(ctx, "CallbackRouter onTableAddRow success")
+		logger.Debugf(ctx, "CallbackRouter onTableAddRow success")
 		return nil
 	case CallbackTypeOnTableUpdateRow:
 		v, ok := router.Template.(*TableTemplate)
@@ -222,7 +243,7 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 			logger.Errorf(ctx, "callback OnTableUpdateRows router:%s error:%s", req.Type, err.Error())
 			return err
 		}
-		logger.Infof(ctx, "CallbackRouter OnTableUpdateRows success")
+		logger.Debugf(ctx, "CallbackRouter OnTableUpdateRows success")
 		return nil
 	case CallbackTypeOnTableDeleteRows:
 		v, ok := router.Template.(*TableTemplate)
@@ -246,7 +267,7 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 			logger.Errorf(ctx, "callback OnTableDeleteRows router:%s error:%s", req.Type, err.Error())
 			return err
 		}
-		logger.Infof(ctx, "CallbackRouter OnTableDeleteRows success")
+		logger.Debugf(ctx, "CallbackRouter OnTableDeleteRows success")
 		return nil
 	case CallbackTypeOnSelectFuzzy:
 		var onCallback callback.OnSelectFuzzyReq
@@ -269,8 +290,49 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 			logger.Errorf(ctx, "callback OnSelectFuzzy router:%s error:%s", req.Type, err.Error())
 			return err
 		}
-		logger.Infof(ctx, "CallbackRouter OnSelectFuzzy success")
+		logger.Debugf(ctx, "CallbackRouter OnSelectFuzzy success")
 	}
 	return nil
 
+}
+
+func handleSystemTableGetRows(ctx *Context, template *TableTemplate, req *callback.TableGetRowsReq) (*callback.TableGetRowsResp, error) {
+	if template == nil {
+		return nil, errors.New("invalid type of TableTemplate")
+	}
+	ids := req.GetIDs()
+	if len(ids) == 0 {
+		return &callback.TableGetRowsResp{Rows: []map[string]interface{}{}}, nil
+	}
+
+	model := template.EffectiveAutoCrudTable()
+	if model == nil {
+		return nil, errors.New("[系统错误]-[__table_get_rows] 表格未配置 AutoCrudTable，无法按 id 查询旧值")
+	}
+	rowsPtr, err := newRowsSlicePtr(model)
+	if err != nil {
+		return nil, fmt.Errorf("[系统错误]-[__table_get_rows] 构造查询结果失败: %w", err)
+	}
+	db := ctx.GetGormDB()
+	if db == nil {
+		return nil, errors.New("[系统错误]-[__table_get_rows] 应用数据库不可用")
+	}
+	if err := db.Model(model).Where("id IN ?", ids).Find(rowsPtr.Interface()).Error; err != nil {
+		return nil, fmt.Errorf("[系统错误]-[__table_get_rows] 查询旧值失败: %w", err)
+	}
+	return &callback.TableGetRowsResp{Rows: rowsPtr.Elem().Interface()}, nil
+}
+
+func newRowsSlicePtr(model interface{}) (reflect.Value, error) {
+	modelType := reflect.TypeOf(model)
+	if modelType == nil {
+		return reflect.Value{}, errors.New("model is nil")
+	}
+	for modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	if modelType.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("model must be struct or pointer to struct, got %s", modelType.Kind())
+	}
+	return reflect.New(reflect.SliceOf(modelType)), nil
 }

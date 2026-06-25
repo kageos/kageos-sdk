@@ -12,6 +12,7 @@ type FormSchedule struct {
 	Code         string      `json:"code"`
 	Title        string      `json:"title,omitempty"`
 	Description  string      `json:"description,omitempty"`
+	Enabled      *bool       `json:"enabled,omitempty"`
 	EverySeconds int64       `json:"every_seconds,omitempty"`
 	CronExpr     string      `json:"cron_expr,omitempty"`
 	Timezone     string      `json:"timezone,omitempty"`
@@ -23,6 +24,7 @@ type CompiledFormSchedule struct {
 	Code         string          `json:"code"`
 	Title        string          `json:"title,omitempty"`
 	Description  string          `json:"description,omitempty"`
+	Enabled      *bool           `json:"enabled,omitempty"`
 	EverySeconds int64           `json:"every_seconds,omitempty"`
 	CronExpr     string          `json:"cron_expr,omitempty"`
 	Timezone     string          `json:"timezone,omitempty"`
@@ -69,6 +71,7 @@ func compileFormSchedule(route string, index int, schedule FormSchedule) (Compil
 		Code:         code,
 		Title:        strings.TrimSpace(schedule.Title),
 		Description:  strings.TrimSpace(schedule.Description),
+		Enabled:      schedule.Enabled,
 		EverySeconds: schedule.EverySeconds,
 		CronExpr:     cronExpr,
 		Timezone:     strings.TrimSpace(schedule.Timezone),

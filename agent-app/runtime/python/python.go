@@ -370,7 +370,7 @@ func (e *Executor) installPackages(ctx context.Context, workDir, pythonPath stri
 
 		// 第一步：环境变量快速检查（最快，O(1) 查找）
 		if e.isPackageInstalled(pkgName, installedPackages) {
-			logger.Infof(ctx, "[Python] 包 %s 已安装（环境变量检查），跳过", pkgName)
+			logger.Debugf(ctx, "[Python] 包 %s 已安装（环境变量检查），跳过", pkgName)
 			continue
 		}
 
@@ -378,12 +378,12 @@ func (e *Executor) installPackages(ctx context.Context, workDir, pythonPath stri
 		// 处理包名映射（例如：Pillow -> PIL, opencv-python -> cv2）
 		importName := e.mapPackageToImport(pkgName)
 		if e.canImportPackage(ctx, pythonPath, importName, workDir) {
-			logger.Infof(ctx, "[Python] 包 %s 已安装（导入检查），跳过", pkgName)
+			logger.Debugf(ctx, "[Python] 包 %s 已安装（导入检查），跳过", pkgName)
 			continue
 		}
 
 		// 第三步：包未安装，执行安装
-		logger.Infof(ctx, "[Python] 安装包: %s", pkg)
+		logger.Debugf(ctx, "[Python] 安装包: %s", pkg)
 		cmd := exec.CommandContext(ctx, pythonPath, "-m", "pip", "install", "--quiet", "--break-system-packages", pkg)
 		cmd.Dir = workDir
 
@@ -391,7 +391,7 @@ func (e *Executor) installPackages(ctx context.Context, workDir, pythonPath stri
 			logger.Warnf(ctx, "[Python] 安装包失败: %s, 错误: %v", pkg, err)
 			// 不返回错误，继续安装其他包
 		} else {
-			logger.Infof(ctx, "[Python] 包 %s 安装成功", pkgName)
+			logger.Debugf(ctx, "[Python] 包 %s 安装成功", pkgName)
 		}
 	}
 	return nil

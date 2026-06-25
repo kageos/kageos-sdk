@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	_ "net/http/pprof" // 导入 pprof
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -110,7 +111,7 @@ func (a *App) getRoute(router string) (*routerInfo, error) {
 		return info, nil
 	}
 
-	logger.Infof(a, "Router %s not found routerInfo:%+v ", key, a.routerInfo)
+	logger.Warnf(a, "Router %s not found", key)
 	return nil, fmt.Errorf("router %s not found", router)
 }
 
@@ -139,7 +140,9 @@ func NewApp() (*App, error) {
 		return nil, err
 	}
 
-	startPprofServer()
+	if appPprofEnabled() {
+		startPprofServer()
+	}
 
 	logger.Infof(context.Background(), "NewApp() completed successfully")
 	return newApp, nil
@@ -147,15 +150,25 @@ func NewApp() (*App, error) {
 
 func initAppLogger() error {
 	cfg := logger.Config{
-		Level:      "info",
+		Level:      appLogLevel(),
 		Filename:   fmt.Sprintf("/app/workplace/logs/%s_%s_%s.log", env.User, env.App, env.Version),
-		MaxSize:    100,
-		MaxBackups: 3,
-		MaxAge:     7,
+		MaxSize:    logger.DefaultMaxSize,
+		MaxBackups: logger.DefaultMaxBackups,
+		MaxAge:     logger.DefaultMaxAge,
 		Compress:   true,
 		IsDev:      false,
 	}
 	return logger.Init(cfg)
+}
+
+func appLogLevel() string {
+	if level := strings.TrimSpace(os.Getenv("KAGEOS_APP_LOG_LEVEL")); level != "" {
+		return level
+	}
+	if level := strings.TrimSpace(os.Getenv("KAGEOS_LOG_LEVEL")); level != "" {
+		return level
+	}
+	return "info"
 }
 
 func connectAppNATS() (*nats.Conn, error) {
@@ -192,7 +205,7 @@ func probeAppNATSURL(natsURL string) (string, error) {
 		err := probeNATSStatus(candidate, time.Second)
 		if err == nil {
 			if candidate != natsURL {
-				logger.Infof(context.Background(), "NATS endpoint auto-resolved: %s -> %s", natsURL, candidate)
+				logger.Infof(context.Background(), "NATS endpoint auto-resolved: %s -> %s", redactURLForLog(natsURL), redactURLForLog(candidate))
 			}
 			return candidate, nil
 		}
@@ -222,14 +235,37 @@ func probeNATSStatus(natsURL string, timeout time.Duration) error {
 }
 
 func connectAppNATSCandidate(natsURL, name string, options ...nats.Option) (*nats.Conn, error) {
-	logger.Infof(context.Background(), "Connecting to NATS: %s", natsURL)
+	logger.Infof(context.Background(), "Connecting to NATS: %s", redactURLForLog(natsURL))
 	conn, err := natsx.ConnectNamedWithOptions(natsURL, name, options...)
 	if err != nil {
-		logger.Errorf(context.Background(), "Failed to connect to NATS %s: %v", natsURL, err)
-		return nil, fmt.Errorf("failed to connect to NATS %s: %w", natsURL, err)
+		logger.Errorf(context.Background(), "Failed to connect to NATS %s: %v", redactURLForLog(natsURL), err)
+		return nil, fmt.Errorf("failed to connect to NATS %s: %w", redactURLForLog(natsURL), err)
 	}
-	logger.Infof(context.Background(), "NATS connected successfully to %s", conn.ConnectedUrl())
+	logger.Infof(context.Background(), "NATS connected successfully to %s", redactURLForLog(conn.ConnectedUrl()))
 	return conn, nil
+}
+
+func redactURLForLog(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "<redacted-url>"
+	}
+	if parsed.User != nil {
+		username := parsed.User.Username()
+		if username == "" {
+			parsed.User = url.UserPassword("", "****")
+		} else {
+			parsed.User = url.UserPassword(username, "****")
+		}
+	}
+	if parsed.RawQuery != "" {
+		parsed.RawQuery = "redacted=true"
+	}
+	return parsed.String()
 }
 
 func resolveNATSURL() string {
@@ -288,6 +324,15 @@ func startPprofServer() {
 	}()
 }
 
+func appPprofEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KAGEOS_APP_PPROF"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) notifyStartupBestEffort() {
 	// 发送启动完成通知给 runtime
 	// 通知 runtime 新版本已经成功启动并准备好接收请求
@@ -302,8 +347,7 @@ func (a *App) notifyStartupBestEffort() {
 
 // Start 启动应用
 func (a *App) Start(ctx context.Context) error {
-	fmt.Printf("starting app %s %s %s \n", env.User, env.App, env.Version)
-	logger.Infof(ctx, "App started successfully, waiting for messages...")
+	logger.Infof(ctx, "App started successfully: %s/%s/%s, waiting for messages...", env.User, env.App, env.Version)
 
 	// 添加 panic 恢复机制
 	defer func() {
@@ -553,7 +597,7 @@ func (a *App) getRunningCount() int32 {
 
 // waitForAllFunctionsToComplete 等待所有函数完成
 func (a *App) waitForAllFunctionsToComplete(ctx context.Context, timeout time.Duration) error {
-	logger.Infof(ctx, "Waiting for all functions to complete...")
+	logger.Debugf(ctx, "Waiting for all functions to complete...")
 
 	start := time.Now()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -575,7 +619,7 @@ func (a *App) waitForAllFunctionsToComplete(ctx context.Context, timeout time.Du
 				return fmt.Errorf("timeout waiting for %d functions to complete", count)
 			}
 
-			logger.Infof(ctx, "Still waiting for %d functions to complete...", count)
+			logger.Debugf(ctx, "Still waiting for %d functions to complete...", count)
 		}
 	}
 }
@@ -587,7 +631,7 @@ func (a *App) handleAppControlMessage(msg *nats.Msg) {
 		logger.Errorf(context.Background(), "Failed to unmarshal app control message: %v", err)
 		return
 	}
-	logger.Infof(context.Background(), "Received app control message: %+v", message)
+	logger.Debugf(context.Background(), "Received app control message: type=%s user=%s app=%s version=%s", message.Type, message.User, message.App, message.Version)
 
 	switch message.Type {
 	case subjects.MessageTypeStatusShutdown:
@@ -610,13 +654,13 @@ func forceGCAndFreeMemory() {
 	// 记录清理前的内存统计
 	var mBefore runtime.MemStats
 	runtime.ReadMemStats(&mBefore)
-	logger.Infof(context.Background(), "[Memory] Before GC: Alloc=%d KB, Sys=%d KB, NumGC=%d, HeapSys=%d KB",
+	logger.Debugf(context.Background(), "[Memory] Before GC: Alloc=%d KB, Sys=%d KB, NumGC=%d, HeapSys=%d KB",
 		mBefore.Alloc/1024, mBefore.Sys/1024, mBefore.NumGC, mBefore.HeapSys/1024)
 
 	// 5. 记录清理后的内存统计信息（用于调试）
 	var mAfter runtime.MemStats
 	runtime.ReadMemStats(&mAfter)
-	logger.Infof(context.Background(), "[Memory] After GC: Alloc=%d KB, Sys=%d KB, NumGC=%d, HeapSys=%d KB, Freed=%d KB",
+	logger.Debugf(context.Background(), "[Memory] After GC: Alloc=%d KB, Sys=%d KB, NumGC=%d, HeapSys=%d KB, Freed=%d KB",
 		mAfter.Alloc/1024, mAfter.Sys/1024, mAfter.NumGC, mAfter.HeapSys/1024, (mBefore.Alloc-mAfter.Alloc)/1024)
 
 	// 6. 记录系统内存变化（Sys 的变化更重要）
@@ -624,6 +668,6 @@ func forceGCAndFreeMemory() {
 	if sysDiff > 0 {
 		logger.Warnf(context.Background(), "[Memory] Warning: Sys increased by %d KB (Go may not release memory to OS immediately)", sysDiff/1024)
 	} else {
-		logger.Infof(context.Background(), "[Memory] Sys decreased by %d KB", -sysDiff/1024)
+		logger.Debugf(context.Background(), "[Memory] Sys decreased by %d KB", -sysDiff/1024)
 	}
 }

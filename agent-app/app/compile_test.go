@@ -119,6 +119,7 @@ func TestCompileAndValidateAcceptsValidForm(t *testing.T) {
 func TestFormTemplateSchedulesCompileIntoApiInfo(t *testing.T) {
 	t.Parallel()
 
+	disabled := false
 	testApp := newCompileTestApp("/demo/remind.form", &FormTemplate{
 		BaseConfig: BaseConfig{
 			Name:    "提醒",
@@ -128,6 +129,7 @@ func TestFormTemplateSchedulesCompileIntoApiInfo(t *testing.T) {
 			{
 				Code:         "remind_every_2m",
 				Title:        "每 2 分钟提醒",
+				Enabled:      &disabled,
 				EverySeconds: 120,
 				Body:         map[string]interface{}{"title": "hello"},
 			},
@@ -153,6 +155,9 @@ func TestFormTemplateSchedulesCompileIntoApiInfo(t *testing.T) {
 	}
 	if got := string(apis[0].Schedules[0].Body); got != `{"title":"hello"}` {
 		t.Fatalf("schedule body = %s, want compact JSON body", got)
+	}
+	if apis[0].Schedules[0].Enabled == nil || *apis[0].Schedules[0].Enabled {
+		t.Fatalf("schedule enabled = %#v, want false", apis[0].Schedules[0].Enabled)
 	}
 	if apis[0].Schedules[1].CronExpr != "*/5 * * * *" || apis[0].Schedules[1].Timezone != "Asia/Shanghai" {
 		t.Fatalf("cron schedule not compiled: %#v", apis[0].Schedules[1])

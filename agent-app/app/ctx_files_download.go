@@ -160,9 +160,9 @@ func (c *FS) downloadResolvedFiles(files []resolvedDownloadFile, downloadDir str
 
 			localPaths[idx] = localPath
 			if f.hash != "" {
-				logger.Infof(c.ctx, "[DownloadFiles] 下载文件完成(缓存): %s", f.label())
+				logger.Debugf(c.ctx, "[DownloadFiles] 下载文件完成(缓存): %s", f.label())
 			} else {
-				logger.Infof(c.ctx, "[DownloadFiles] 下载文件完成(无hash不缓存): %s", f.label())
+				logger.Debugf(c.ctx, "[DownloadFiles] 下载文件完成(无hash不缓存): %s", f.label())
 			}
 		}(i, file, candidates)
 	}

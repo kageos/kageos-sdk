@@ -414,11 +414,11 @@ func buildAllowedWidgetTagKeysCache() map[string]map[string]struct{} {
 	common := []string{"name", "type", "desc", "depend_on"}
 	byWidget := map[string][]string{
 		TypeInput:       {"placeholder", "password", "prepend", "append", renderDefaultTagKey},
-		TypeText:        {"format"},
+		TypeText:        {"format", renderDefaultTagKey},
 		TypeTextArea:    {"placeholder", renderDefaultTagKey, "rows"},
 		TypeSelect:      {"options", "options_colors", "placeholder", renderDefaultTagKey, "creatable"},
 		TypeSwitch:      {renderDefaultTagKey},
-		TypeDatetime:    {"format", "disabled", renderDefaultTagKey},
+		TypeDatetime:    {"format", "placeholder", "disabled", renderDefaultTagKey},
 		TypeUser:        {renderDefaultTagKey, "disabled"},
 		TypeUsers:       {renderDefaultTagKey, "max_count"},
 		TypeDepartment:  {renderDefaultTagKey},

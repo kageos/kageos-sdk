@@ -68,6 +68,10 @@ type RenderDefaultFieldSample struct {
 	Priority string `json:"priority" widget:"name:优先级;type:select;options:低,中,高;render_default:中"`
 }
 
+type TextRenderDefaultFieldSample struct {
+	Symbol string `json:"symbol" widget:"name:黄金品种;type:text;format:plain;render_default:XAU/USD"`
+}
+
 type VoteOptionItemSample struct {
 	Content string `json:"content" widget:"name:选项内容;type:input"`
 	Sort    int    `json:"sort" widget:"name:排序;type:integer"`
@@ -252,6 +256,36 @@ func TestDecodeForm(t *testing.T) {
 		}
 		if strings.Contains(string(data), `"default"`) {
 			t.Fatalf("schema should not emit legacy default, got %s", string(data))
+		}
+	})
+
+	t.Run("text支持render_default", func(t *testing.T) {
+		fields, _, err := DecodeForm(nil, &TextRenderDefaultFieldSample{}, nil)
+		if err != nil {
+			t.Fatalf("解析失败: %v", err)
+		}
+		if len(fields) != 1 {
+			t.Fatalf("期望1个字段，实际得到%d个", len(fields))
+		}
+		if fields[0].Widget.Type != TypeText {
+			t.Fatalf("widget type = %q, want %q", fields[0].Widget.Type, TypeText)
+		}
+		textConfig, ok := fields[0].Widget.Config.(*Text)
+		if !ok {
+			t.Fatalf("text config type = %T, want *Text", fields[0].Widget.Config)
+		}
+		if textConfig.Format != "plain" {
+			t.Fatalf("text format = %q", textConfig.Format)
+		}
+		if textConfig.RenderDefault != "XAU/USD" {
+			t.Fatalf("text render_default = %q", textConfig.RenderDefault)
+		}
+		data, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatalf("marshal fields: %v", err)
+		}
+		if !strings.Contains(string(data), `"render_default":"XAU/USD"`) {
+			t.Fatalf("schema should contain text render_default, got %s", string(data))
 		}
 	})
 

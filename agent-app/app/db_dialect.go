@@ -35,7 +35,7 @@ func DateTimeBucketExpr(db *gorm.DB, column string, bucket TimeBucket) (selectEx
 }
 
 // DateTimeBucketExprForDialect returns MySQL expressions for the runtime-managed app business DB.
-// The dialect argument is kept for source compatibility; KageOS app business DB is MySQL-only.
+// The dialect argument is kept for source compatibility; Kageos app business DB is MySQL-only.
 func DateTimeBucketExprForDialect(_ DBDialect, column string, bucket TimeBucket) (selectExpr, groupExpr string) {
 	column = strings.TrimSpace(column)
 	if column == "" {

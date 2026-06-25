@@ -10,6 +10,10 @@ const (
 	CallbackTypeOnTableDeleteRows = "OnTableDeleteRows"
 	CallbackTypeOnPageLoad        = "OnPageLoad"
 	CallbackTypeOnSelectFuzzy     = "OnSelectFuzzy"
+
+	// CallbackTypeSystemTableGetRows is an SDK-private callback used by the
+	// platform to fetch existing table rows by primary key before updates.
+	CallbackTypeSystemTableGetRows = "__table_get_rows"
 )
 
 type OnTableAddRow func(ctx *Context, req *callback.OnTableAddRowReq) (*callback.OnTableAddRowResp, error)

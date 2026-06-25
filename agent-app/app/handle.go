@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,7 +94,7 @@ func (a *App) handleMessage(msg *nats.Msg) {
 		req.WorkspaceRole = msg.Header.Get(contextx.WorkspaceRoleHeader)
 	}
 
-	logger.Infof(ctx, "[SDK:handleMessage] received: traceId=%s, method=%s, router=%s, user=%s, source=%s, bodyLen=%d",
+	logger.Debugf(ctx, "[SDK:handleMessage] received: traceId=%s, method=%s, router=%s, user=%s, source=%s, bodyLen=%d",
 		req.TraceId, req.Method, req.Router, req.RequestUser, req.ClientSource, len(req.Body))
 
 	// 增加运行中函数计数
@@ -107,9 +109,30 @@ func (a *App) handleMessage(msg *nats.Msg) {
 		a.sendErrResponse(resp)
 		return
 	}
-	logger.Infof(ctx, "[SDK:handleMessage] done: traceId=%s, router=%s, hasError=%v, elapsed=%s",
-		req.TraceId, req.Router, resp != nil && resp.Error != "", elapsed.Truncate(time.Millisecond))
+	if threshold := sdkSlowRequestThreshold(); threshold > 0 && elapsed >= threshold {
+		logger.Warnf(ctx, "[SDK:handleMessage] slow request: traceId=%s, router=%s, hasError=%v, elapsed=%s",
+			req.TraceId, req.Router, resp != nil && resp.Error != "", elapsed.Truncate(time.Millisecond))
+	} else {
+		logger.Debugf(ctx, "[SDK:handleMessage] done: traceId=%s, router=%s, hasError=%v, elapsed=%s",
+			req.TraceId, req.Router, resp != nil && resp.Error != "", elapsed.Truncate(time.Millisecond))
+	}
 	a.sendResponse(resp)
+}
+
+func sdkSlowRequestThreshold() time.Duration {
+	const defaultThreshold = 2 * time.Second
+	raw := strings.TrimSpace(os.Getenv("KAGEOS_SDK_SLOW_REQUEST_MS"))
+	if raw == "" {
+		return defaultThreshold
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultThreshold
+	}
+	if ms <= 0 {
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 func (a *App) handle(req *dto.RequestAppReq) (resp *dto.RequestAppResp, err error) {

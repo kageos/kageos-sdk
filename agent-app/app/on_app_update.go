@@ -147,18 +147,18 @@ func (a *App) getApiKey(api *ApiInfo) string {
 
 // 执行API差异对比（使用已获取的 currentApis，避免重复调用 getApis）
 func (a *App) diffApiWithCurrentApis(currentApis []*ApiInfo) (add []*ApiInfo, update []*ApiInfo, delete []*ApiInfo, err error) {
-	logger.Infof(context.Background(), "=== Starting API diff analysis ===")
+	logger.Debugf(context.Background(), "=== Starting API diff analysis ===")
 
-	logger.Infof(context.Background(), "Found %d current APIs", len(currentApis))
+	logger.Debugf(context.Background(), "Found %d current APIs", len(currentApis))
 
 	// 加载上一版本的API
 	previousVersionFile := a.getPreviousVersionFile()
-	logger.Infof(context.Background(), "Previous version file: %s", previousVersionFile)
+	logger.Debugf(context.Background(), "Previous version file: %s", previousVersionFile)
 	previousApis, err := a.loadVersion(previousVersionFile)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to load previous version: %w", err)
 	}
-	logger.Infof(context.Background(), "Found %d previous APIs", len(previousApis))
+	logger.Debugf(context.Background(), "Found %d previous APIs", len(previousApis))
 
 	// 创建API映射
 	currentMap := make(map[string]*ApiInfo)
@@ -167,13 +167,13 @@ func (a *App) diffApiWithCurrentApis(currentApis []*ApiInfo) (add []*ApiInfo, up
 	for _, api := range currentApis {
 		key := a.getApiKey(api)
 		currentMap[key] = api
-		logger.Infof(context.Background(), "Current API: %s -> %s %s", key, api.Method, api.Router)
+		logger.Debugf(context.Background(), "Current API: %s -> %s %s", key, api.Method, api.Router)
 	}
 
 	for _, api := range previousApis {
 		key := a.getApiKey(api)
 		previousMap[key] = api
-		logger.Infof(context.Background(), "Previous API: %s -> %s %s", key, api.Method, api.Router)
+		logger.Debugf(context.Background(), "Previous API: %s -> %s %s", key, api.Method, api.Router)
 	}
 
 	// 找出新增的API
@@ -196,14 +196,14 @@ func (a *App) diffApiWithCurrentApis(currentApis []*ApiInfo) (add []*ApiInfo, up
 	// 找出修改的API
 	for key, currentApi := range currentMap {
 		if previousApi, exists := previousMap[key]; exists {
-			logger.Infof(context.Background(), "Comparing API %s: %s %s", key, currentApi.Method, currentApi.Router)
+			logger.Debugf(context.Background(), "Comparing API %s: %s %s", key, currentApi.Method, currentApi.Router)
 
 			// 先比较API是否真的变更了
 			isEqual := previousApi.IsEqual(currentApi)
-			logger.Infof(context.Background(), "API %s comparison result: %v", key, isEqual)
+			logger.Debugf(context.Background(), "API %s comparison result: %v", key, isEqual)
 
 			if !isEqual {
-				logger.Infof(context.Background(), "API %s has changed, adding to update list", key)
+				logger.Debugf(context.Background(), "API %s has changed, adding to update list", key)
 				// 只有真正变更时才创建修改版本
 				modifiedApi := *currentApi
 				modifiedApi.AddedVersion = previousApi.AddedVersion
@@ -219,11 +219,11 @@ func (a *App) diffApiWithCurrentApis(currentApis []*ApiInfo) (add []*ApiInfo, up
 
 				update = append(update, &modifiedApi)
 			} else {
-				logger.Infof(context.Background(), "API %s unchanged, skipping", key)
+				logger.Debugf(context.Background(), "API %s unchanged, skipping", key)
 			}
 			// 如果API没有变更，什么都不做，保持原来的版本信息
 		} else {
-			logger.Infof(context.Background(), "API %s not found in previous version", key)
+			logger.Debugf(context.Background(), "API %s not found in previous version", key)
 		}
 	}
 
@@ -231,10 +231,10 @@ func (a *App) diffApiWithCurrentApis(currentApis []*ApiInfo) (add []*ApiInfo, up
 	sortApiInfosByKey(update)
 	sortApiInfosByKey(delete)
 
-	logger.Infof(context.Background(), "=== API diff analysis completed ===")
+	logger.Debugf(context.Background(), "=== API diff analysis completed ===")
 	logger.Infof(context.Background(), "Added: %d, Updated: %d, Deleted: %d", len(add), len(update), len(delete))
 	for i, api := range update {
-		logger.Infof(context.Background(), "Updated API %d: %s %s (AddedVersion: %s, UpdateVersions: %v)",
+		logger.Debugf(context.Background(), "Updated API %d: %s %s (AddedVersion: %s, UpdateVersions: %v)",
 			i+1, api.Method, api.Router, api.AddedVersion, api.UpdateVersions)
 	}
 
@@ -387,15 +387,14 @@ func (a *App) buildApiInfo(info *routerInfo) (*ApiInfo, []interface{}, error) {
 
 // collectPackageInfos 收集当前应用的全量 package 信息
 // 每次 update 都会调用，返回的全量列表供 app-server 做目录对账
-func (a *App) collectPackageInfos() []*PackageInfo {
+func (a *App) collectPackageInfos() ([]*PackageInfo, error) {
 	seen := make(map[string]*PackageInfo)
 
-	for _, info := range a.routerInfo {
-		if info.Options == nil || info.Options.PackagePath == "" {
-			continue
+	addPackagePath := func(pkgPath string) {
+		pkgPath = strings.Trim(pkgPath, "/")
+		if pkgPath == "" {
+			return
 		}
-
-		pkgPath := info.Options.PackagePath
 		parts := strings.Split(pkgPath, "/")
 
 		for i := 1; i <= len(parts); i++ {
@@ -405,26 +404,43 @@ func (a *App) collectPackageInfos() []*PackageInfo {
 			}
 
 			code := parts[i-1]
-			name := code
-			desc := ""
-
-			if pc, ok := a.packageContexts[subPath]; ok {
-				if pc.Name != "" {
-					name = pc.Name
-				}
-				if pc.Desc != "" {
-					desc = pc.Desc
-				}
-			}
-
 			seen[subPath] = &PackageInfo{
 				Code:        code,
-				Name:        name,
-				Desc:        desc,
+				Name:        code,
 				RouterGroup: "/" + subPath,
 				FullPath:    fmt.Sprintf("/%s/%s/%s", env.User, env.App, subPath),
 			}
 		}
+	}
+
+	for _, info := range a.routerInfo {
+		if info.Options == nil || info.Options.PackagePath == "" {
+			continue
+		}
+
+		addPackagePath(info.Options.PackagePath)
+	}
+
+	for pkgPath := range a.packageContexts {
+		addPackagePath(pkgPath)
+	}
+
+	for subPath, info := range seen {
+		pc, ok := a.packageContexts[subPath]
+		if !ok || pc == nil {
+			continue
+		}
+		if pc.Name != "" {
+			info.Name = pc.Name
+		}
+		if pc.Desc != "" {
+			info.Desc = pc.Desc
+		}
+		tasks, err := compileAgentTasks(info.RouterGroup, pc.AgentTasks)
+		if err != nil {
+			return nil, err
+		}
+		info.AgentTasks = tasks
 	}
 
 	result := make([]*PackageInfo, 0, len(seen))
@@ -441,7 +457,7 @@ func (a *App) collectPackageInfos() []*PackageInfo {
 		return result[i].FullPath < result[j].FullPath
 	})
 
-	return result
+	return result, nil
 }
 
 // onAppUpdate 处理当api更新时候触发
@@ -524,12 +540,12 @@ func (a *App) migrateUpdateDatabases(ctx context.Context, currentApis []*ApiInfo
 
 func (a *App) migrateUpdateDatabaseForAPI(ctx context.Context, index int, api *ApiInfo, dbCapability *dto.AppDBCapability) error {
 	if api.routerInfo.Options == nil {
-		logger.Infof(ctx, "[onAppUpdate] Step 2: API %d (%s) has no options, skipping DB init", index, api.Name)
+		logger.Debugf(ctx, "[onAppUpdate] Step 2: API %d (%s) has no options, skipping DB init", index, api.Name)
 		return nil
 	}
 
 	packagePath := strings.Trim(api.routerInfo.Options.PackagePath, "/")
-	logger.Infof(ctx, "[onAppUpdate] Step 2: API %d (%s) opening MySQL app DB for package: %s", index, api.Name, packagePath)
+	logger.Debugf(ctx, "[onAppUpdate] Step 2: API %d (%s) opening MySQL app DB for package: %s", index, api.Name, packagePath)
 	db, err := getOrInitMySQLMigrationDB(packagePath, dbCapability)
 	if err != nil {
 		logger.Errorf(ctx, "[onAppUpdate] Step 2 FAILED: get MySQL app DB for package=%s: %v", packagePath, err)
@@ -565,7 +581,11 @@ func (a *App) buildUpdateDiffData(ctx context.Context, currentApis []*ApiInfo) (
 	}
 	logger.Infof(ctx, "[onAppUpdate] Step 4 OK: add=%d, update=%d, delete=%d", len(add), len(update), len(del))
 
-	packages := a.collectPackageInfos()
+	packages, err := a.collectPackageInfos()
+	if err != nil {
+		logger.Errorf(ctx, "[onAppUpdate] Step 5 FAILED: %v", err)
+		return nil, fmt.Errorf("Failed to collect packages: %v", err)
+	}
 	logger.Infof(ctx, "[onAppUpdate] Step 5: collected %d packages for reconciliation", len(packages))
 
 	return &DiffData{

@@ -149,7 +149,7 @@ func runtimeBuildPythonResponse(ctx *Context, req runtimePythonReq, execResult *
 			outputStr = fmt.Sprintf("执行错误: %v", err)
 		}
 	} else if execResult != nil {
-		logger.Infof(ctx, "[RuntimePython] 执行 Python 代码成功")
+		logger.Debugf(ctx, "[RuntimePython] 执行 Python 代码成功")
 		if req.CollectOutputFiles || len(execResult.OutputFiles) > 0 {
 			paths, pathErr := execResult.OutputFilePaths()
 			if pathErr != nil {

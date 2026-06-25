@@ -22,6 +22,7 @@ func init() {
 // - 前端表单/API raw value 使用 "YYYY-MM-DD HH:mm:ss" 字符串；
 // - schema 输出时 data.type 会被 decode.go 固定为 string，避免前端拿到 struct 时间对象；
 // - 数据库存储推荐使用 sdk/agent-app/types.Time + gorm:"type:datetime"，不要为了前端协议把数据库列降级成 varchar；
+// - placeholder 是前端输入提示文案；
 // - render_default 是前端渲染默认值，不等于数据库默认值。
 //
 // 当前支持的时间默认值函数在前端 dynamicDefaultValue.ts 中解析：
@@ -35,7 +36,7 @@ func init() {
 // - Config(): 返回写入 schema 的组件配置；
 // - Type(): 返回 widget 类型 datetime；
 // - WidgetLLMFacts(): 给 LLM 摘要输出示例值、存储语义和默认值；
-// - newDateTime(): 从 widget tag 解析 format/disabled/render_default；
+// - newDateTime(): 从 widget tag 解析 format/placeholder/disabled/render_default；
 // - validateDatetimeWidget(): 启动期校验 Go 字段类型是否适合 datetime。
 //
 // 校验规则：
@@ -45,6 +46,7 @@ func init() {
 // - render_default 支持静态时间字符串，或前端可解析的 CURRENT_TIMESTAMP/CURRENT_DATE/DATE_ADD/DATE_SUB 表达式。
 type DateTime struct {
 	Format        string `json:"format,omitempty"`         // 日期格式，如 YYYY-MM-DD HH:mm:ss
+	Placeholder   string `json:"placeholder,omitempty"`    // 输入提示文案
 	Disabled      bool   `json:"disabled,omitempty"`       // 是否禁用
 	RenderDefault string `json:"render_default,omitempty"` // 前端渲染默认值，支持 CURRENT_TIMESTAMP、DATE_ADD 等白名单 SQL 风格表达式
 }
@@ -65,6 +67,9 @@ func (t *DateTime) WidgetLLMFacts(field *Field, opts SummaryOptions) []SemanticF
 	if t.Format != "" {
 		facts = append(facts, SemanticFact{Key: "display_format", Value: t.Format})
 	}
+	if fact, ok := placeholderFact(t.Placeholder); ok {
+		facts = append(facts, fact)
+	}
 	if t.RenderDefault != "" {
 		facts = append(facts, SemanticFact{Key: llmUIDefaultLabel, Value: t.RenderDefault})
 	}
@@ -79,6 +84,9 @@ func newDateTime(widgetParsed map[string]string) *DateTime {
 
 	if format, exists := widgetParsed["format"]; exists {
 		datetime.Format = format
+	}
+	if placeholder, exists := widgetParsed["placeholder"]; exists {
+		datetime.Placeholder = placeholder
 	}
 	if disabled, exists := widgetParsed["disabled"]; exists {
 		datetime.Disabled = disabled == "true"

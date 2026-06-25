@@ -91,10 +91,10 @@ func (fc *FileCache) GetOrDownload(ctx context.Context, hash string, downloadURL
 		if err := copyFile(ctx, cachedPath, targetPath); err != nil {
 			return "", false, fmt.Errorf("复制文件失败: %w", err)
 		}
-		logger.Infof(ctx, "[FileCache] 从缓存复制文件: hash=%s, cachedPath=%s -> targetPath=%s", hash, cachedPath, targetPath)
+		logger.Debugf(ctx, "[FileCache] 从缓存复制文件: hash=%s, cachedPath=%s -> targetPath=%s", hash, cachedPath, targetPath)
 	} else {
 		// 3. 如果缓存不存在，直接下载到目标路径
-		logger.Infof(ctx, "[FileCache] 缓存文件不存在，直接下载到目标路径: hash=%s, url=%s, targetPath=%s", hash, downloadURL, targetPath)
+		logger.Debugf(ctx, "[FileCache] 缓存文件不存在，直接下载到目标路径: hash=%s, targetPath=%s", hash, targetPath)
 		if err := downloadFile(ctx, downloadURL, targetPath); err != nil {
 			return "", false, err
 		}
@@ -102,7 +102,7 @@ func (fc *FileCache) GetOrDownload(ctx context.Context, hash string, downloadURL
 		// 记录到缓存（缓存记录的是第一次下载的路径）
 		fc.hashToPath[hash] = targetPath
 		fc.refCount[targetPath] = 0 // 初始引用计数为0，创建用户文件后会增加
-		logger.Infof(ctx, "[FileCache] 下载文件完成并记录到缓存: hash=%s, path=%s", hash, targetPath)
+		logger.Debugf(ctx, "[FileCache] 下载文件完成并记录到缓存: hash=%s, path=%s", hash, targetPath)
 	}
 
 	fc.pathToHash[targetPath] = hash
@@ -163,7 +163,7 @@ func copyFile(ctx context.Context, srcPath, dstPath string) error {
 		return fmt.Errorf("复制文件内容失败: %w", err)
 	}
 
-	logger.Infof(ctx, "[FileCache] 普通复制完成: %s -> %s, 大小: %d bytes", srcPath, dstPath, written)
+	logger.Debugf(ctx, "[FileCache] 普通复制完成: %s -> %s, 大小: %d bytes", srcPath, dstPath, written)
 	return nil
 }
 
@@ -220,7 +220,7 @@ func downloadFile(ctx context.Context, url string, filePath string) error {
 		return fmt.Errorf("写入文件失败: %w", err)
 	}
 
-	logger.Infof(ctx, "[downloadFile] 下载完成: %s, 大小: %d bytes", filePath, written)
+	logger.Debugf(ctx, "[downloadFile] 下载完成: %s, 大小: %d bytes", filePath, written)
 	return nil
 }
 

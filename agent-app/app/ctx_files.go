@@ -88,7 +88,7 @@ func (c *FS) DownloadFilesDetailed(fileRefs string) DownloadFilesResult {
 		return DownloadFilesResult{Refs: refs, Issues: []string{"创建下载目录失败"}}
 	}
 
-	logger.Infof(c.ctx, "[DownloadFiles] 开始下载文件，TraceId=%s, 目录=%s, 文件数量=%d", traceID, downloadDir, len(refs))
+	logger.Debugf(c.ctx, "[DownloadFiles] 开始下载文件，TraceId=%s, 目录=%s, 文件数量=%d", traceID, downloadDir, len(refs))
 
 	resolvedFiles, ok := c.resolveDownloadFiles(refs)
 	if !ok {
@@ -99,7 +99,7 @@ func (c *FS) DownloadFilesDetailed(fileRefs string) DownloadFilesResult {
 	}
 
 	localPaths, stats, issues := c.downloadResolvedFiles(resolvedFiles, downloadDir)
-	logger.Infof(c.ctx, "[DownloadFiles] 下载完成: 总文件数=%d, 下载=%d, 跳过=%d", len(resolvedFiles), stats.downloadCount, stats.skipCount)
+	logger.Debugf(c.ctx, "[DownloadFiles] 下载完成: 总文件数=%d, 下载=%d, 跳过=%d", len(resolvedFiles), stats.downloadCount, stats.skipCount)
 	return DownloadFilesResult{
 		Paths:         compactNonEmptyStrings(localPaths),
 		Refs:          refs,
@@ -132,7 +132,7 @@ func (c *FS) RemoveFiles(files []string) {
 	if err := os.RemoveAll(downloadDir); err != nil {
 		logger.Errorf(c.ctx, "[RemoveFiles] 删除下载目录失败: %v", err)
 	} else {
-		logger.Infof(c.ctx, "[RemoveFiles] 已删除下载目录: %s", downloadDir)
+		logger.Debugf(c.ctx, "[RemoveFiles] 已删除下载目录: %s", downloadDir)
 	}
 }
 

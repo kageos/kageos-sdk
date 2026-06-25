@@ -23,6 +23,22 @@ func (c *OnTableDeleteRowsReq) GetIds() []int {
 
 type OnTableDeleteRowsResp struct {
 }
+
+type TableGetRowsReq struct {
+	IDs []int64 `json:"ids"`
+}
+
+func (c *TableGetRowsReq) GetIDs() []int64 {
+	if c == nil {
+		return nil
+	}
+	return c.IDs
+}
+
+type TableGetRowsResp struct {
+	Rows interface{} `json:"rows"`
+}
+
 type OnTableUpdateRowReq struct {
 	ID                   int                    `json:"id"`
 	ChangedFieldsBindMap map[string]interface{} `json:"changed_fields_bind_map"` // 前端提交的原始更新值备份，用于需要按原始表单值绑定结构体的场景。

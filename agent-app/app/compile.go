@@ -27,6 +27,9 @@ func (a *App) CompileAndValidate() error {
 	if _, _, err := a.getApis(); err != nil {
 		errs = append(errs, err)
 	}
+	if _, err := a.collectPackageInfos(); err != nil {
+		errs = append(errs, err)
+	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("SDK schema compile failed: %w", err)
 	}

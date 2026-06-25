@@ -233,6 +233,10 @@ type validatorGoodDatetimeDefaultReq struct {
 	PlanAt   apptypes.Time `json:"plan_at" widget:"name:计划时间;type:datetime;render_default:2026-05-01 10:30:00"`
 }
 
+type validatorDatetimePlaceholderReq struct {
+	NextFollowupAt string `json:"next_followup_at" widget:"name:下次跟进时间;type:datetime;format:YYYY-MM-DD HH:mm:ss;placeholder:可选"`
+}
+
 type validatorTableConflictReq struct {
 	Status string `json:"status" widget:"name:状态入参;type:input"`
 }
@@ -469,6 +473,23 @@ func TestWidgetValidatorRejectsInvalidDatetimeDefaults(t *testing.T) {
 
 	if _, _, err := DecodeForm(nil, &validatorGoodDatetimeDefaultReq{}, nil); err != nil {
 		t.Fatalf("DecodeForm() good datetime defaults error = %v, want nil", err)
+	}
+}
+
+func TestDecodeFormAllowsDatetimePlaceholder(t *testing.T) {
+	fields, _, err := DecodeForm(nil, &validatorDatetimePlaceholderReq{}, nil)
+	if err != nil {
+		t.Fatalf("DecodeForm() datetime placeholder error = %v, want nil", err)
+	}
+	if len(fields) != 1 {
+		t.Fatalf("len(fields) = %d, want 1", len(fields))
+	}
+	config, ok := fields[0].Widget.Config.(*DateTime)
+	if !ok {
+		t.Fatalf("datetime config type = %T, want *DateTime", fields[0].Widget.Config)
+	}
+	if config.Placeholder != "可选" {
+		t.Fatalf("datetime placeholder = %q, want 可选", config.Placeholder)
 	}
 }
 
@@ -799,6 +820,11 @@ func TestAllowedTagKeysExposeRuntimeContract(t *testing.T) {
 	}
 	if hasStringItem(inputKeys, "readonly") {
 		t.Fatalf("input keys should not include unsupported readonly: %#v", inputKeys)
+	}
+
+	datetimeKeys := AllowedTagKeys(TypeDatetime)
+	if !hasStringItem(datetimeKeys, "placeholder") {
+		t.Fatalf("datetime keys should include placeholder, got %#v", datetimeKeys)
 	}
 }
 
