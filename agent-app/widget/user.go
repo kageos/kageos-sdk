@@ -16,6 +16,7 @@ func init() {
 //
 //	widget:"name:预约人;type:user;render_default:Me()"
 //	widget:"name:审批人;type:user;render_default:MyLeader()"
+//	widget:"name:负责人;type:user;placeholder:留空表示全部"
 //
 // 动态默认值函数说明：
 //   - Me(): 自动填充当前登录用户的用户名，用户无需手动选择
@@ -28,6 +29,7 @@ func init() {
 //   - 如果用户未登录，Me() 会返回 null
 //   - 如果用户没有上级领导，MyLeader() 会返回 null
 //   - disabled: 是否禁用（只读模式，Form 中展示但不可编辑）
+//   - placeholder: 前端选择提示文案
 //
 // 校验规则：
 // - 注册的是本文件的 validateUserWidget；
@@ -36,6 +38,7 @@ func init() {
 // - 字段值存储用户名/用户标识字符串；
 // - render_default 里的 Me()/MyLeader() 在前端动态默认值逻辑中解析，SDK 只透传配置。
 type User struct {
+	Placeholder   string `json:"placeholder,omitempty"`    // 占位符文本
 	RenderDefault string `json:"render_default,omitempty"` // 前端渲染默认值，支持函数调用 Me()（当前登录用户）、MyLeader()（当前用户的上级领导）
 	Disabled      bool   `json:"disabled,omitempty"`       // 是否禁用（只读模式）
 }
@@ -54,6 +57,9 @@ func (u *User) WidgetLLMFacts(field *Field, opts SummaryOptions) []SemanticFact 
 	}
 	if u.RenderDefault != "" {
 		facts = append(facts, SemanticFact{Key: llmUIDefaultLabel, Value: u.RenderDefault})
+	}
+	if fact, ok := placeholderFact(u.Placeholder); ok {
+		facts = append(facts, fact)
 	}
 	if u.Disabled && opts.Mode == SummaryFull {
 		facts = append(facts, SemanticFact{Key: "disabled", Value: "true"})
@@ -81,6 +87,9 @@ func newUser(widgetParsed map[string]string) *User {
 	// 从widgetParsed中解析配置
 	if defaultValue, exists := getRenderDefault(widgetParsed); exists {
 		user.RenderDefault = defaultValue
+	}
+	if placeholder, exists := widgetParsed["placeholder"]; exists {
+		user.Placeholder = placeholder
 	}
 	if disabled, exists := widgetParsed["disabled"]; exists {
 		user.Disabled = disabled == "true"

@@ -22,6 +22,7 @@ func init() {
 //	widget:"name:审核人;type:users;render_default:Me()"
 //	widget:"name:抄送人;type:users;render_default:MyLeader()"
 //	widget:"name:管理员;type:users;max_count:5"
+//	widget:"name:协作人;type:users;placeholder:可选择多个用户"
 //
 // 动态默认值函数说明：
 //   - Me(): 自动填充当前登录用户的用户名，用户无需手动选择
@@ -34,6 +35,7 @@ func init() {
 //   - 如果用户没有上级领导，MyLeader() 会返回 null
 //   - 值存储格式：逗号分隔的字符串（如 "user1,user2"），便于存储到数据库
 //   - 前端会自动处理字符串和数组之间的转换
+//   - placeholder: 前端选择提示文案
 //
 // 校验规则：
 // - Go 字段可以是 string/*string，也可以是 []string/[N]string；
@@ -41,6 +43,7 @@ func init() {
 // - 不允许 []int/[]struct，因为用户标识协议是字符串；
 // - render_default 里的 Me()/MyLeader() 由前端动态默认值逻辑解析。
 type Users struct {
+	Placeholder   string `json:"placeholder,omitempty"`    // 占位符文本
 	RenderDefault string `json:"render_default,omitempty"` // 前端渲染默认值，支持函数调用 Me()、MyLeader()，多个值用逗号分隔
 	MaxCount      int    `json:"max_count,omitempty"`      // 最大选择数量，0表示不限制
 }
@@ -60,6 +63,9 @@ func (u *Users) WidgetLLMFacts(field *Field, opts SummaryOptions) []SemanticFact
 	if u.RenderDefault != "" {
 		facts = append(facts, SemanticFact{Key: llmUIDefaultLabel, Value: u.RenderDefault})
 	}
+	if fact, ok := placeholderFact(u.Placeholder); ok {
+		facts = append(facts, fact)
+	}
 	if u.MaxCount > 0 && opts.Mode == SummaryFull {
 		facts = append(facts, SemanticFact{Key: "max_count", Value: fmt.Sprintf("%d", u.MaxCount)})
 	}
@@ -72,6 +78,9 @@ func newUsers(widgetParsed map[string]string) *Users {
 	// 从widgetParsed中解析配置
 	if defaultValue, exists := getRenderDefault(widgetParsed); exists {
 		users.RenderDefault = defaultValue
+	}
+	if placeholder, exists := widgetParsed["placeholder"]; exists {
+		users.Placeholder = placeholder
 	}
 	if maxCount, exists := widgetParsed["max_count"]; exists {
 		// 解析最大选择数量，支持 "0" 或 "" 表示不限制

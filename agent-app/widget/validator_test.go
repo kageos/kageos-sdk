@@ -237,6 +237,14 @@ type validatorDatetimePlaceholderReq struct {
 	NextFollowupAt string `json:"next_followup_at" widget:"name:下次跟进时间;type:datetime;format:YYYY-MM-DD HH:mm:ss;placeholder:可选"`
 }
 
+type validatorUserPlaceholderReq struct {
+	Owner string `json:"owner" widget:"name:只提醒负责人;type:user;placeholder:留空提醒全部负责人"`
+}
+
+type validatorUsersPlaceholderReq struct {
+	Owners string `json:"owners" widget:"name:提醒负责人;type:users;placeholder:可选择多个负责人;max_count:5"`
+}
+
 type validatorTableConflictReq struct {
 	Status string `json:"status" widget:"name:状态入参;type:input"`
 }
@@ -490,6 +498,43 @@ func TestDecodeFormAllowsDatetimePlaceholder(t *testing.T) {
 	}
 	if config.Placeholder != "可选" {
 		t.Fatalf("datetime placeholder = %q, want 可选", config.Placeholder)
+	}
+}
+
+func TestDecodeFormAllowsUserPlaceholder(t *testing.T) {
+	fields, _, err := DecodeForm(nil, &validatorUserPlaceholderReq{}, nil)
+	if err != nil {
+		t.Fatalf("DecodeForm() user placeholder error = %v, want nil", err)
+	}
+	if len(fields) != 1 {
+		t.Fatalf("len(fields) = %d, want 1", len(fields))
+	}
+	config, ok := fields[0].Widget.Config.(*User)
+	if !ok {
+		t.Fatalf("user config type = %T, want *User", fields[0].Widget.Config)
+	}
+	if config.Placeholder != "留空提醒全部负责人" {
+		t.Fatalf("user placeholder = %q, want 留空提醒全部负责人", config.Placeholder)
+	}
+}
+
+func TestDecodeFormAllowsUsersPlaceholder(t *testing.T) {
+	fields, _, err := DecodeForm(nil, &validatorUsersPlaceholderReq{}, nil)
+	if err != nil {
+		t.Fatalf("DecodeForm() users placeholder error = %v, want nil", err)
+	}
+	if len(fields) != 1 {
+		t.Fatalf("len(fields) = %d, want 1", len(fields))
+	}
+	config, ok := fields[0].Widget.Config.(*Users)
+	if !ok {
+		t.Fatalf("users config type = %T, want *Users", fields[0].Widget.Config)
+	}
+	if config.Placeholder != "可选择多个负责人" {
+		t.Fatalf("users placeholder = %q, want 可选择多个负责人", config.Placeholder)
+	}
+	if config.MaxCount != 5 {
+		t.Fatalf("users max_count = %d, want 5", config.MaxCount)
 	}
 }
 
@@ -825,6 +870,16 @@ func TestAllowedTagKeysExposeRuntimeContract(t *testing.T) {
 	datetimeKeys := AllowedTagKeys(TypeDatetime)
 	if !hasStringItem(datetimeKeys, "placeholder") {
 		t.Fatalf("datetime keys should include placeholder, got %#v", datetimeKeys)
+	}
+
+	userKeys := AllowedTagKeys(TypeUser)
+	if !hasStringItem(userKeys, "placeholder") {
+		t.Fatalf("user keys should include placeholder, got %#v", userKeys)
+	}
+
+	usersKeys := AllowedTagKeys(TypeUsers)
+	if !hasStringItem(usersKeys, "placeholder") {
+		t.Fatalf("users keys should include placeholder, got %#v", usersKeys)
 	}
 }
 
