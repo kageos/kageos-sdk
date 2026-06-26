@@ -1,12 +1,14 @@
 package app
 
+import "github.com/kageos/kageos-sdk/agent-app/chart"
+
 // 图表类型常量（与 chart 包图表类型、前端 ChartRenderer 约定一致）
 // 生成/手写图表代码时请使用以下常量，勿写死字符串
 const (
-	ChartTypeBar   = "bar"   // 柱状图
-	ChartTypeLine  = "line"  // 折线图
-	ChartTypePie   = "pie"   // 饼图
-	ChartTypeGauge = "gauge" // 仪表盘
+	ChartTypeBar   = chart.TypeBar   // 柱状图
+	ChartTypeLine  = chart.TypeLine  // 折线图
+	ChartTypePie   = chart.TypePie   // 饼图
+	ChartTypeGauge = chart.TypeGauge // 仪表盘
 )
 
 type ChartTemplate struct {

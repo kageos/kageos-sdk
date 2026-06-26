@@ -354,11 +354,17 @@ func (a *App) buildApiInfo(info *routerInfo) (*ApiInfo, []interface{}, error) {
 		api.Schema = functionschema.NewForm(fields, responseFields, nil)
 
 	case TemplateTypeChart:
+		template, ok := info.Template.(*ChartTemplate)
+		if !ok {
+			errs = append(errs, fmt.Errorf("router %s declares template type %q but template is not *ChartTemplate", info.Router, templateType))
+			break
+		}
+		warnChartTemplateType(info.Router, template.ChartType)
 		fields, responseFields, err := widget.DecodeForm(fieldsCallback, base.Request, base.Response)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("router %s chart schema decode failed: %w", info.Router, err))
 		}
-		api.Schema = functionschema.NewChart(fields, responseFields, nil)
+		api.Schema = functionschema.NewChartWithType(template.ChartType, fields, responseFields, nil)
 	default:
 		errs = append(errs, fmt.Errorf("router %s has unsupported template type: %s", info.Router, templateType))
 	}

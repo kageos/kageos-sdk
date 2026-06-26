@@ -292,6 +292,56 @@ func TestTableTemplateExplicitAutoCrudTableWinsOverCreateTablesFallback(t *testi
 	}
 }
 
+func TestChartTemplateChartTypeIsExportedInSchema(t *testing.T) {
+	t.Parallel()
+
+	testApp := newCompileTestApp("/demo/trend.chart", &ChartTemplate{
+		BaseConfig: BaseConfig{
+			Request: compileTestReq{},
+		},
+		ChartType: ChartTypeLine,
+	})
+
+	if err := testApp.CompileAndValidate(); err != nil {
+		t.Fatalf("CompileAndValidate() error = %v, want nil", err)
+	}
+	apis, _, err := testApp.getApis()
+	if err != nil {
+		t.Fatalf("getApis() error = %v, want nil", err)
+	}
+	if len(apis) != 1 || apis[0].Schema == nil || apis[0].Schema.Chart == nil {
+		t.Fatalf("getApis() schema = %#v, want one chart schema", apis)
+	}
+	if apis[0].Schema.Chart.ChartType != ChartTypeLine {
+		t.Fatalf("chart_type = %q, want %q", apis[0].Schema.Chart.ChartType, ChartTypeLine)
+	}
+}
+
+func TestChartTemplateTypeWarningsDoNotBlockCompile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		chartType string
+	}{
+		{name: "missing", chartType: ""},
+		{name: "unsupported", chartType: "scatter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testApp := newCompileTestApp("/demo/trend.chart", &ChartTemplate{
+				BaseConfig: BaseConfig{
+					Request: compileTestReq{},
+				},
+				ChartType: tt.chartType,
+			})
+			if err := testApp.CompileAndValidate(); err != nil {
+				t.Fatalf("CompileAndValidate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
 func newCompileTestApp(route string, template Templater) *App {
 	return &App{
 		routerInfo: map[string]*routerInfo{

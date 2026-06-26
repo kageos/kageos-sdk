@@ -254,6 +254,15 @@ type validatorPageSortReqTableConflictReq struct {
 	query.PageSortReq
 }
 
+type validatorEmbeddedPageSortReq struct {
+	query.PageSortReq
+}
+
+type validatorNestedPageSortReqTableConflictReq struct {
+	Status string `json:"status" widget:"name:状态入参;type:input"`
+	validatorEmbeddedPageSortReq
+}
+
 type validatorAuditFilterPageSortReq struct {
 	CreatedAt string `json:"created_at" form:"created_at" widget:"name:创建时间;type:datetime;format:YYYY-MM-DD HH:mm:ss"`
 	UpdatedAt string `json:"updated_at" form:"updated_at" widget:"name:更新时间;type:datetime;format:YYYY-MM-DD HH:mm:ss"`
@@ -547,6 +556,13 @@ func TestDecodeTableRejectsRequestAndTableFieldCodeConflicts(t *testing.T) {
 
 func TestDecodeTableAllowsPageSortReqRequestAndTableFieldCodeOverlap(t *testing.T) {
 	_, _, err := DecodeTable(nil, &validatorPageSortReqTableConflictReq{}, &validatorTableConflictModel{})
+	if err != nil {
+		t.Fatalf("DecodeTable() error = %v, want nil", err)
+	}
+}
+
+func TestDecodeTableAllowsNestedPageSortReqRequestAndTableFieldCodeOverlap(t *testing.T) {
+	_, _, err := DecodeTable(nil, &validatorNestedPageSortReqTableConflictReq{}, &validatorTableConflictModel{})
 	if err != nil {
 		t.Fatalf("DecodeTable() error = %v, want nil", err)
 	}

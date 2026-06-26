@@ -283,6 +283,18 @@ func parseStructFields(structType reflect.Type) ([]*FieldTags, error) {
 
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
+		if shouldSkipAnonymousEmbeddedField(field) {
+			continue
+		}
+		if embeddedType, ok := anonymousEmbeddedStructTypeToFlatten(field); ok {
+			embeddedFields, err := parseStructFields(embeddedType)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("embedded field %s: %w", field.Name, err))
+				continue
+			}
+			fields = append(fields, embeddedFields...)
+			continue
+		}
 		tags, ok, err := parseStructField(field)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("field %s: %w", field.Name, err))
@@ -295,6 +307,45 @@ func parseStructFields(structType reflect.Type) ([]*FieldTags, error) {
 	}
 
 	return fields, errors.Join(errs...)
+}
+
+func shouldSkipAnonymousEmbeddedField(field reflect.StructField) bool {
+	if !field.Anonymous {
+		return false
+	}
+	if field.Tag.Get("widget") == "-" || isJsonOmit(field.Tag.Get("json")) {
+		return true
+	}
+	fieldType := derefType(field.Type)
+	return fieldType.Kind() == reflect.Struct && fieldType.Name() == "PageSortReq"
+}
+
+func anonymousEmbeddedStructTypeToFlatten(field reflect.StructField) (reflect.Type, bool) {
+	if !field.Anonymous || !field.IsExported() {
+		return nil, false
+	}
+	if strings.TrimSpace(field.Tag.Get("widget")) != "" {
+		return nil, false
+	}
+	if hasExplicitJSONFieldName(field.Tag.Get("json")) {
+		return nil, false
+	}
+	fieldType := derefType(field.Type)
+	if fieldType.Kind() != reflect.Struct {
+		return nil, false
+	}
+	return fieldType, true
+}
+
+func hasExplicitJSONFieldName(jsonTag string) bool {
+	tag := strings.TrimSpace(jsonTag)
+	if tag == "" {
+		return false
+	}
+	if idx := strings.Index(tag, ","); idx >= 0 {
+		tag = strings.TrimSpace(tag[:idx])
+	}
+	return tag != ""
 }
 
 func parseStructField(field reflect.StructField) (*FieldTags, bool, error) {
@@ -553,13 +604,25 @@ func requestEmbedsType(model interface{}, typeName string) bool {
 	if t.Kind() != reflect.Struct {
 		return false
 	}
+	return structEmbedsType(t, typeName, map[reflect.Type]bool{})
+}
+
+func structEmbedsType(t reflect.Type, typeName string, seen map[reflect.Type]bool) bool {
+	t = derefType(t)
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		fieldType := field.Type
-		for fieldType.Kind() == reflect.Ptr {
-			fieldType = fieldType.Elem()
-		}
+		fieldType := derefType(field.Type)
 		if field.Anonymous && fieldType.Name() == typeName {
+			return true
+		}
+		if field.Anonymous && structEmbedsType(fieldType, typeName, seen) {
 			return true
 		}
 	}

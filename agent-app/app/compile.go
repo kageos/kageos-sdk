@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/kageos/kageos-sdk/pkg/logger"
 )
 
 // CompileAndValidate compiles the registered app definition into the platform
@@ -88,17 +90,33 @@ func validateRouterDefinition(info *routerInfo) error {
 			errs = append(errs, err)
 		}
 	case TemplateTypeChart:
-		if _, ok := info.Template.(*ChartTemplate); !ok {
+		template, ok := info.Template.(*ChartTemplate)
+		if !ok {
 			errs = append(errs, fmt.Errorf("%s declares template type %q but template is not *ChartTemplate", route, templateType))
 			break
 		}
 		if err := validateRouteSuffix(route, ".chart", templateType); err != nil {
 			errs = append(errs, err)
 		}
+		warnChartTemplateType(route, template.ChartType)
 	default:
 		errs = append(errs, fmt.Errorf("%s has unsupported template type: %s", route, templateType))
 	}
 	return errors.Join(errs...)
+}
+
+func warnChartTemplateType(route string, chartType string) {
+	chartType = strings.TrimSpace(chartType)
+	if chartType == "" {
+		logger.Warnf(nil, "[SDK:chart warning] %s chart template 未声明 chart_type。SDK 会继续启动；建议填写 line/bar/pie/gauge，方便平台提前知道图表组件。", route)
+		return
+	}
+	switch chartType {
+	case ChartTypeBar, ChartTypeLine, ChartTypePie, ChartTypeGauge:
+		return
+	default:
+		logger.Warnf(nil, "[SDK:chart warning] %s chart template 声明了未知 chart_type=%q。SDK 会继续启动；请确认前端是否支持该图表类型。", route, chartType)
+	}
 }
 
 func validateRouteSuffix(route, suffix string, templateType TemplateType) error {

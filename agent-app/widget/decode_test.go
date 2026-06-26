@@ -90,6 +90,26 @@ type PageSortReqSkipSample struct {
 	query.PageSortReq
 }
 
+type EmbeddedFilterSample struct {
+	Keyword string `json:"keyword" widget:"name:关键词;type:input"`
+	Status  string `json:"status" widget:"name:状态;type:select;options:全部,启用,停用"`
+}
+
+type EmbeddedFilterReqSample struct {
+	EmbeddedFilterSample
+	Owner string `json:"owner" widget:"name:负责人;type:user"`
+	query.PageSortReq
+}
+
+type ExplicitEmbeddedFormReqSample struct {
+	EmbeddedFilterSample `json:"scope" widget:"name:筛选范围;type:form"`
+}
+
+type HiddenEmbeddedFilterReqSample struct {
+	EmbeddedFilterSample `widget:"-"`
+	Owner                string `json:"owner" widget:"name:负责人;type:user"`
+}
+
 func TestDecodeForm(t *testing.T) {
 	t.Run("基础Form解析-包含table和form嵌套", func(t *testing.T) {
 		order := &Order{}
@@ -328,6 +348,48 @@ func TestDecodeForm(t *testing.T) {
 		}
 		if fields[0].Code != "name" {
 			t.Fatalf("fields[0].Code = %q, want name", fields[0].Code)
+		}
+	})
+
+	t.Run("匿名嵌入业务结构体展开为同级字段", func(t *testing.T) {
+		fields, _, err := DecodeForm(nil, &EmbeddedFilterReqSample{}, nil)
+		if err != nil {
+			t.Fatalf("DecodeForm() error = %v, want nil", err)
+		}
+		wantCodes := []string{"keyword", "status", "owner"}
+		if len(fields) != len(wantCodes) {
+			t.Fatalf("len(fields) = %d, want %d: %#v", len(fields), len(wantCodes), fields)
+		}
+		for i, want := range wantCodes {
+			if fields[i].Code != want {
+				t.Fatalf("fields[%d].Code = %q, want %q", i, fields[i].Code, want)
+			}
+		}
+	})
+
+	t.Run("显式form匿名嵌入保持嵌套", func(t *testing.T) {
+		fields, _, err := DecodeForm(nil, &ExplicitEmbeddedFormReqSample{}, nil)
+		if err != nil {
+			t.Fatalf("DecodeForm() error = %v, want nil", err)
+		}
+		if len(fields) != 1 {
+			t.Fatalf("len(fields) = %d, want 1: %#v", len(fields), fields)
+		}
+		if fields[0].Code != "scope" || fields[0].Widget.Type != TypeForm {
+			t.Fatalf("embedded field = %#v, want scope form", fields[0])
+		}
+		if len(fields[0].Children) != 2 || fields[0].Children[0].Code != "keyword" || fields[0].Children[1].Code != "status" {
+			t.Fatalf("form children = %#v, want keyword/status", fields[0].Children)
+		}
+	})
+
+	t.Run("隐藏匿名嵌入不展开", func(t *testing.T) {
+		fields, _, err := DecodeForm(nil, &HiddenEmbeddedFilterReqSample{}, nil)
+		if err != nil {
+			t.Fatalf("DecodeForm() error = %v, want nil", err)
+		}
+		if len(fields) != 1 || fields[0].Code != "owner" {
+			t.Fatalf("fields = %#v, want only owner", fields)
 		}
 	})
 

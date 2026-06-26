@@ -33,6 +33,11 @@ func (a *App) handleMessage(msg *nats.Msg) {
 	if a.shutdownRequested {
 		a.shutdownMu.RUnlock()
 		logger.Warnf(ctx, "Shutdown requested, rejecting new request")
+		a.sendErrResponse(&dto.RequestAppResp{
+			TraceId: msg.Header.Get(contextx.TraceIdHeader),
+			Error:   "application is shutting down",
+			ErrCode: 1,
+		})
 		return
 	}
 	a.shutdownMu.RUnlock()
@@ -189,9 +194,12 @@ func (a *App) handle(req *dto.RequestAppReq) (resp *dto.RequestAppResp, err erro
 	newContext.routerInfo = router
 	handleFunc := router.HandleFunc
 
-	var res response.RunFunctionResp
+	res := response.RunFunctionResp{ExpectedChartType: expectedChartType(router)}
 	err = handleFunc(newContext, &res)
 	appResp := dto.RequestAppResp{Result: res.Data(), TraceId: newContext.msg.TraceId}
+	for _, warning := range res.Warnings() {
+		logger.Warnf(ctx, "[SDK:chart warning] router=%s warning=%s", newContext.msg.Router, warning)
+	}
 	if err != nil {
 		// 根据是否含 [系统错误] 区分：不含的视为业务错误（ErrCode=-1，不触发智能体）；含的视为系统错误（ErrCode=1，需智能体介入排查）。
 		if v, ok := err.(*response.BizErr); ok {
@@ -214,4 +222,15 @@ func (a *App) handle(req *dto.RequestAppReq) (resp *dto.RequestAppResp, err erro
 	}
 
 	return &appResp, nil
+}
+
+func expectedChartType(router *routerInfo) string {
+	if router == nil || router.Template == nil {
+		return ""
+	}
+	template, ok := router.Template.(*ChartTemplate)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(template.ChartType)
 }
