@@ -39,6 +39,12 @@ func main() {
 }
 ```
 
+## Guides
+
+- [Chart time bucket policy](agent-app/CHART_BUCKET_POLICY.md): choose chart
+  aggregation granularity, estimate returned points, and optionally coarsen
+  oversized chart responses.
+
 ## Local Development
 
 Run the SDK test suite:

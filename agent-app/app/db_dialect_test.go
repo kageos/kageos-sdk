@@ -38,6 +38,20 @@ func TestDateTimeBucketExprForDialect(t *testing.T) {
 		wantSelect string
 	}{
 		{
+			name:       "mysql minute",
+			dialect:    DBDialectMySQL,
+			column:     "checked_at",
+			bucket:     TimeBucketMinute,
+			wantSelect: "DATE_FORMAT(checked_at, '%Y-%m-%d %H:%i:00')",
+		},
+		{
+			name:       "mysql five minute",
+			dialect:    DBDialectMySQL,
+			column:     "checked_at",
+			bucket:     TimeBucket5Minute,
+			wantSelect: "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(checked_at) / 300) * 300, '%Y-%m-%d %H:%i:00')",
+		},
+		{
 			name:       "mysql day",
 			dialect:    DBDialectMySQL,
 			column:     "created_at",

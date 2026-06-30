@@ -16,9 +16,12 @@ const (
 type TimeBucket string
 
 const (
-	TimeBucketHour  TimeBucket = "hour"
-	TimeBucketDay   TimeBucket = "day"
-	TimeBucketMonth TimeBucket = "month"
+	TimeBucketAuto    TimeBucket = "auto"
+	TimeBucketMinute  TimeBucket = "minute"
+	TimeBucket5Minute TimeBucket = "5_minute"
+	TimeBucketHour    TimeBucket = "hour"
+	TimeBucketDay     TimeBucket = "day"
+	TimeBucketMonth   TimeBucket = "month"
 )
 
 // DetectDBDialect returns the normalized dialect name for the current GORM DB.
@@ -44,6 +47,10 @@ func DateTimeBucketExprForDialect(_ DBDialect, column string, bucket TimeBucket)
 
 	var expr string
 	switch normalizeTimeBucket(bucket) {
+	case TimeBucketMinute:
+		expr = "DATE_FORMAT(" + column + ", '%Y-%m-%d %H:%i:00')"
+	case TimeBucket5Minute:
+		expr = "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(" + column + ") / 300) * 300, '%Y-%m-%d %H:%i:00')"
 	case TimeBucketHour:
 		expr = "DATE_FORMAT(" + column + ", '%Y-%m-%d %H:00:00')"
 	case TimeBucketMonth:
@@ -66,6 +73,10 @@ func detectDBDialectName(name string) DBDialect {
 
 func normalizeTimeBucket(bucket TimeBucket) TimeBucket {
 	switch TimeBucket(strings.ToLower(strings.TrimSpace(string(bucket)))) {
+	case TimeBucketMinute, "min":
+		return TimeBucketMinute
+	case TimeBucket5Minute, "5minute", "5_min", "5min", "5m":
+		return TimeBucket5Minute
 	case TimeBucketHour:
 		return TimeBucketHour
 	case TimeBucketMonth:
