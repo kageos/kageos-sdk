@@ -16,6 +16,7 @@ type GetOperateLogsReq struct {
 	Action             string `json:"action" form:"action"`
 	Status             string `json:"status" form:"status"`
 	Source             string `json:"source" form:"source"`
+	TraceID            string `json:"trace_id" form:"trace_id"`
 	RowID              int64  `json:"row_id" form:"row_id"`
 	Keyword            string `json:"keyword" form:"keyword"`
 	Page               int    `json:"page" form:"page"`

@@ -1,6 +1,7 @@
 package widget
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -204,7 +205,7 @@ type validatorFieldTagItem struct {
 
 type validatorBadFieldTagReq struct {
 	NameA         string                  `json:"name" widget:"name:名称A;type:input"`
-	NameB         string                  `json:"name" widget:"name:名称B;type:input"`
+	NameB         string                  `json:"name_b" widget:"name:名称B;type:input"`
 	MissingType   string                  `json:"missing_type" widget:"name:缺少类型"`
 	BadHide       string                  `json:"bad_hide" widget:"name:展示;type:input" hide:"detail"`
 	EmptyHide     string                  `json:"empty_hide" widget:"name:展示;type:input" hide:""`
@@ -438,7 +439,6 @@ func TestWidgetValidatorRejectsInvalidFieldLevelTags(t *testing.T) {
 		t.Fatal("DecodeForm() error = nil, want error")
 	}
 	for _, want := range []string{
-		`duplicate field code "name" in same level`,
 		`widget tag must include type`,
 		`hide scene must be one of list,create,update`,
 		`hide tag must not be empty`,
@@ -449,6 +449,29 @@ func TestWidgetValidatorRejectsInvalidFieldLevelTags(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("DecodeForm() error = %v, want substring %q", err, want)
 		}
+	}
+}
+
+func TestWidgetValidatorRejectsDuplicateFieldCodes(t *testing.T) {
+	err := validateFieldTagLevel([]*FieldTags{
+		{
+			Json:         "name",
+			WidgetParsed: map[string]string{"name": "名称A", "type": TypeInput},
+			Type:         reflect.TypeOf(""),
+			FieldName:    "NameA",
+		},
+		{
+			Json:         "name",
+			WidgetParsed: map[string]string{"name": "名称B", "type": TypeInput},
+			Type:         reflect.TypeOf(""),
+			FieldName:    "NameB",
+		},
+	}, nil, validateFieldTagOptions{})
+	if err == nil {
+		t.Fatal("validateFieldTagLevel() error = nil, want duplicate field code error")
+	}
+	if want := `duplicate field code "name" in same level`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("validateFieldTagLevel() error = %v, want substring %q", err, want)
 	}
 }
 

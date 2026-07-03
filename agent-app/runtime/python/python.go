@@ -357,6 +357,7 @@ func (e *Executor) createWorkDir() (string, error) {
 func (e *Executor) installPackages(ctx context.Context, workDir, pythonPath string) error {
 	// 获取已安装包列表（从环境变量，一次性读取）
 	installedPackages := e.getInstalledPackages()
+	var installErrs []error
 
 	for _, pkg := range e.packages {
 		pkg = strings.TrimSpace(pkg)
@@ -387,14 +388,19 @@ func (e *Executor) installPackages(ctx context.Context, workDir, pythonPath stri
 		cmd := exec.CommandContext(ctx, pythonPath, "-m", "pip", "install", "--quiet", "--break-system-packages", pkg)
 		cmd.Dir = workDir
 
-		if err := cmd.Run(); err != nil {
-			logger.Warnf(ctx, "[Python] 安装包失败: %s, 错误: %v", pkg, err)
-			// 不返回错误，继续安装其他包
+		if output, err := cmd.CombinedOutput(); err != nil {
+			detail := strings.TrimSpace(string(output))
+			if detail != "" {
+				installErrs = append(installErrs, fmt.Errorf("安装 Python 包 %q 失败: %w\n%s", pkg, err, detail))
+			} else {
+				installErrs = append(installErrs, fmt.Errorf("安装 Python 包 %q 失败: %w", pkg, err))
+			}
+			logger.Warnf(ctx, "[Python] 安装包失败: %s, 错误: %v, 输出: %s", pkg, err, detail)
 		} else {
 			logger.Debugf(ctx, "[Python] 包 %s 安装成功", pkgName)
 		}
 	}
-	return nil
+	return errors.Join(installErrs...)
 }
 
 // getInstalledPackages 从环境变量获取已安装包列表（一次性读取，避免重复解析）
@@ -500,6 +506,7 @@ func (e *Executor) mapPackageToImport(pkgName string) string {
 		"pyyaml":          "yaml",
 		"qrcode":          "qrcode",
 		"python-barcode":  "barcode",
+		"zxing-cpp":       "zxingcpp",
 		"toml":            "toml",
 		"tabulate":        "tabulate",
 		"arrow":           "arrow",
