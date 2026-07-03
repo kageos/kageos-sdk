@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/kageos/kageos-sdk/pkg/logger"
 )
 
 type pythonExecutionWorkspace struct {
@@ -93,7 +91,7 @@ func (e *Executor) prepareExecutionWorkspace(ctx context.Context) (*pythonExecut
 
 	if len(e.packages) > 0 {
 		if err := e.installPackages(ctx, workDir, pythonPath); err != nil {
-			logger.Warnf(ctx, "[Python] 安装包失败: %v", err)
+			return nil, err
 		}
 	}
 

@@ -163,6 +163,41 @@ return {"data": result}
 	t.Logf("输出: %s", string(output))
 }
 
+func TestExecutor_InstallPackagesReturnsPipFailure(t *testing.T) {
+	ctx := context.Background()
+	workDir := t.TempDir()
+	pythonPath := filepath.Join(workDir, "python")
+	script := `#!/bin/sh
+if [ "$1" = "-c" ]; then
+  exit 1
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
+  echo "pip says no" >&2
+  exit 42
+fi
+exit 0
+`
+	if err := os.WriteFile(pythonPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := NewExecutor("").WithPackages("missing-package-for-test")
+	err := executor.installPackages(ctx, workDir, pythonPath)
+	if err == nil {
+		t.Fatal("installPackages should return pip failure")
+	}
+	if !strings.Contains(err.Error(), "missing-package-for-test") || !strings.Contains(err.Error(), "pip says no") {
+		t.Fatalf("installPackages error missing useful detail: %v", err)
+	}
+}
+
+func TestExecutor_MapPackageToImportIncludesZxingCpp(t *testing.T) {
+	executor := NewExecutor("")
+	if got := executor.mapPackageToImport("zxing-cpp"); got != "zxingcpp" {
+		t.Fatalf("mapPackageToImport(zxing-cpp) = %q, want zxingcpp", got)
+	}
+}
+
 func TestExecutor_BuilderPattern(t *testing.T) {
 	ctx := context.Background()
 
