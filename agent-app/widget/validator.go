@@ -434,7 +434,7 @@ func buildAllowedWidgetTagKeysCache() map[string]map[string]struct{} {
 		TypeRate:        {"max", "allow_half", renderDefaultTagKey, "texts"},
 		TypeColor:       {"format", renderDefaultTagKey, "show_alpha"},
 		TypeRichText:    {"height"},
-		TypeTable:       {},
+		TypeTable:       {"placeholder"},
 		TypeForm:        {},
 		TypeLink:        {"text", "target", "link_type", "icon"},
 		TypeProgress:    {"min", "max", "unit"},

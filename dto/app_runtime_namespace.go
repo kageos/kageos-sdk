@@ -172,6 +172,7 @@ type AgentTaskConfig struct {
 	Files              string `json:"files,omitempty"`
 	LLMConfigID        int64  `json:"llm_config_id,omitempty"`
 	MaxDurationSeconds int64  `json:"max_duration_seconds,omitempty"`
+	Policy             string `json:"policy,omitempty"`
 }
 
 type DiffData struct {

@@ -447,6 +447,11 @@ func (a *App) collectPackageInfos() ([]*PackageInfo, error) {
 			return nil, err
 		}
 		info.AgentTasks = tasks
+		docs, err := compileDocManifests(info.RouterGroup, pc.Docs)
+		if err != nil {
+			return nil, err
+		}
+		info.Docs = docs
 	}
 
 	result := make([]*PackageInfo, 0, len(seen))

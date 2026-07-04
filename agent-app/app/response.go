@@ -15,12 +15,13 @@ type UpdateResponse struct {
 
 // PackageInfo SDK 返回的 package 元信息，app-server 用于目录对账
 type PackageInfo struct {
-	Code        string              `json:"code"`                  // 目录名（如 "pdf"）
-	Name        string              `json:"name"`                  // 显示名称
-	Desc        string              `json:"desc"`                  // 描述
-	RouterGroup string              `json:"router_group"`          // 路由组路径（如 "/plugins/pdf"）
-	FullPath    string              `json:"full_path"`             // 完整路径（如 "/user/app/plugins/pdf"）
-	AgentTasks  []CompiledAgentTask `json:"agent_tasks,omitempty"` // package 出厂默认定时会话模板
+	Code        string                `json:"code"`                  // 目录名（如 "pdf"）
+	Name        string                `json:"name"`                  // 显示名称
+	Desc        string                `json:"desc"`                  // 描述
+	RouterGroup string                `json:"router_group"`          // 路由组路径（如 "/plugins/pdf"）
+	FullPath    string                `json:"full_path"`             // 完整路径（如 "/user/app/plugins/pdf"）
+	AgentTasks  []CompiledAgentTask   `json:"agent_tasks,omitempty"` // package 出厂默认定时会话模板
+	Docs        []CompiledDocManifest `json:"docs,omitempty"`        // package 出厂默认文档种子
 }
 
 // DiffData API差异数据

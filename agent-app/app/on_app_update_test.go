@@ -98,8 +98,49 @@ func TestCollectPackageInfosIncludesAgentTasksFromPackageContext(t *testing.T) {
 		t.Fatalf("package agent tasks not collected: %#v", got[0])
 	}
 	task := got[0].AgentTasks[0]
-	if task.Code != "daily_report" || task.Message == "" || task.CronExpr != "0 8 * * *" || task.Enabled {
+	if task.Code != "daily_report" || task.Message == "" || task.CronExpr != "0 8 * * *" || task.Enabled || task.Policy != AgentTaskCreateIfMissing {
 		t.Fatalf("unexpected agent task: %#v", task)
+	}
+}
+
+func TestCollectPackageInfosIncludesDocsFromPackageContext(t *testing.T) {
+	oldUser, oldApp := env.User, env.App
+	env.User, env.App = "alice", "demo"
+	defer func() {
+		env.User, env.App = oldUser, oldApp
+	}()
+
+	app := &App{
+		routerInfo: map[string]*routerInfo{
+			"/followup/sweep.form": {
+				Options: &RegisterOptions{PackagePath: "followup"},
+			},
+		},
+		packageContexts: map[string]*PackageContext{
+			"followup": {
+				Name: "物流节点跟进",
+				Docs: []DocManifest{
+					{
+						Code:    "runbook.docs",
+						Name:    "运行手册",
+						Content: "# 物流节点跟进运行手册\n",
+						Format:  "markdown",
+					},
+				},
+			},
+		},
+	}
+
+	got, err := app.collectPackageInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].FullPath != "/alice/demo/followup" || len(got[0].Docs) != 1 {
+		t.Fatalf("package docs not collected: %#v", got)
+	}
+	doc := got[0].Docs[0]
+	if doc.Code != "runbook" || doc.Name != "运行手册" || doc.Policy != DocCreateIfMissing || doc.Content != "# 物流节点跟进运行手册\n" {
+		t.Fatalf("unexpected docs manifest: %#v", doc)
 	}
 }
 
@@ -127,6 +168,55 @@ func TestCollectPackageInfosRejectsInvalidAgentTask(t *testing.T) {
 
 	if _, err := app.collectPackageInfos(); err == nil {
 		t.Fatal("expected invalid agent task error")
+	}
+}
+
+func TestCollectPackageInfosRejectsInvalidAgentTaskPolicy(t *testing.T) {
+	oldUser, oldApp := env.User, env.App
+	env.User, env.App = "alice", "demo"
+	defer func() {
+		env.User, env.App = oldUser, oldApp
+	}()
+
+	app := &App{
+		packageContexts: map[string]*PackageContext{
+			"gold_watch": {
+				AgentTasks: []AgentTask{
+					{
+						Code:     "bad_policy",
+						Message:  "bad policy",
+						CronExpr: "0 8 * * *",
+						Policy:   "update_managed",
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := app.collectPackageInfos(); err == nil {
+		t.Fatal("expected invalid agent task policy error")
+	}
+}
+
+func TestCollectPackageInfosRejectsInvalidDocManifest(t *testing.T) {
+	oldUser, oldApp := env.User, env.App
+	env.User, env.App = "alice", "demo"
+	defer func() {
+		env.User, env.App = oldUser, oldApp
+	}()
+
+	app := &App{
+		packageContexts: map[string]*PackageContext{
+			"followup": {
+				Docs: []DocManifest{
+					{Code: "runbook", Content: "# Runbook\n", Policy: "overwrite"},
+				},
+			},
+		},
+	}
+
+	if _, err := app.collectPackageInfos(); err == nil {
+		t.Fatal("expected invalid docs manifest error")
 	}
 }
 

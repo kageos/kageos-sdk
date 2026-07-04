@@ -8,6 +8,10 @@ import (
 	"github.com/kageos/kageos-sdk/pkg/logger"
 )
 
+const (
+	AgentTaskCreateIfMissing = "create_if_missing"
+)
+
 // AgentTask describes a default scheduled workspace agent session owned by a package.
 // It is declarative metadata only; timer-scheduler owns runtime state.
 type AgentTask struct {
@@ -24,6 +28,7 @@ type AgentTask struct {
 	Files              string `json:"files,omitempty"`
 	LLMConfigID        int64  `json:"llm_config_id,omitempty"`
 	MaxDurationSeconds int64  `json:"max_duration_seconds,omitempty"`
+	Policy             string `json:"policy,omitempty"`
 }
 
 type CompiledAgentTask struct {
@@ -40,6 +45,7 @@ type CompiledAgentTask struct {
 	Files              string `json:"files,omitempty"`
 	LLMConfigID        int64  `json:"llm_config_id,omitempty"`
 	MaxDurationSeconds int64  `json:"max_duration_seconds,omitempty"`
+	Policy             string `json:"policy,omitempty"`
 }
 
 func (p *PackageContext) AddAgentTask(task AgentTask) {
@@ -96,6 +102,13 @@ func compileAgentTask(routerGroup string, index int, task AgentTask) (CompiledAg
 	if hasCron == hasEvery {
 		return CompiledAgentTask{}, fmt.Errorf("%s agent task %q must set exactly one of cron_expr or every_seconds", routerGroup, code)
 	}
+	policy := strings.TrimSpace(task.Policy)
+	if policy == "" {
+		policy = AgentTaskCreateIfMissing
+	}
+	if policy != AgentTaskCreateIfMissing {
+		return CompiledAgentTask{}, fmt.Errorf("%s agent task %q unsupported policy %q", routerGroup, code, policy)
+	}
 	return CompiledAgentTask{
 		Code:               code,
 		Title:              strings.TrimSpace(task.Title),
@@ -110,5 +123,6 @@ func compileAgentTask(routerGroup string, index int, task AgentTask) (CompiledAg
 		Files:              strings.TrimSpace(task.Files),
 		LLMConfigID:        task.LLMConfigID,
 		MaxDurationSeconds: task.MaxDurationSeconds,
+		Policy:             policy,
 	}, nil
 }

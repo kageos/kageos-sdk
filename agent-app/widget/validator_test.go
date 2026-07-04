@@ -246,6 +246,10 @@ type validatorUsersPlaceholderReq struct {
 	Owners string `json:"owners" widget:"name:提醒负责人;type:users;placeholder:可选择多个负责人;max_count:5"`
 }
 
+type validatorTablePlaceholderReq struct {
+	Items []validatorFieldTagItem `json:"items" widget:"name:明细;type:table;placeholder:留空则后端自动生成默认明细"`
+}
+
 type validatorTableConflictReq struct {
 	Status string `json:"status" widget:"name:状态入参;type:input"`
 }
@@ -567,6 +571,19 @@ func TestDecodeFormAllowsUsersPlaceholder(t *testing.T) {
 	}
 	if config.MaxCount != 5 {
 		t.Fatalf("users max_count = %d, want 5", config.MaxCount)
+	}
+}
+
+func TestDecodeFormAllowsTablePlaceholder(t *testing.T) {
+	fields, _, err := DecodeForm(nil, &validatorTablePlaceholderReq{}, nil)
+	if err != nil {
+		t.Fatalf("DecodeForm() table placeholder error = %v, want nil", err)
+	}
+	if len(fields) != 1 {
+		t.Fatalf("len(fields) = %d, want 1", len(fields))
+	}
+	if fields[0].Widget.Type != TypeTable {
+		t.Fatalf("widget type = %q, want %q", fields[0].Widget.Type, TypeTable)
 	}
 }
 
@@ -919,6 +936,11 @@ func TestAllowedTagKeysExposeRuntimeContract(t *testing.T) {
 	usersKeys := AllowedTagKeys(TypeUsers)
 	if !hasStringItem(usersKeys, "placeholder") {
 		t.Fatalf("users keys should include placeholder, got %#v", usersKeys)
+	}
+
+	tableKeys := AllowedTagKeys(TypeTable)
+	if !hasStringItem(tableKeys, "placeholder") {
+		t.Fatalf("table keys should include placeholder, got %#v", tableKeys)
 	}
 }
 
