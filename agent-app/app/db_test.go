@@ -33,3 +33,13 @@ func TestGetDBByPackagePathRequiresContextCapability(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRuntimeAppGORMConfigDisablesMigratedForeignKeys(t *testing.T) {
+	cfg := runtimeAppGORMConfig()
+	if cfg == nil {
+		t.Fatal("runtime app GORM config should not be nil")
+	}
+	if !cfg.DisableForeignKeyConstraintWhenMigrating {
+		t.Fatal("runtime app GORM config must allow Preload associations without creating database foreign keys")
+	}
+}

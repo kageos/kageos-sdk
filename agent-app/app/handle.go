@@ -98,6 +98,20 @@ func (a *App) handleMessage(msg *nats.Msg) {
 	if req.WorkspaceRole == "" {
 		req.WorkspaceRole = msg.Header.Get(contextx.WorkspaceRoleHeader)
 	}
+	if req.InitiatorUser == "" {
+		req.InitiatorUser = msg.Header.Get(contextx.InitiatorUserHeader)
+	}
+	if req.WorkspaceMessageID == 0 {
+		if messageID, err := strconv.ParseInt(strings.TrimSpace(msg.Header.Get(contextx.WorkspaceMessageIDHeader)), 10, 64); err == nil && messageID > 0 {
+			req.WorkspaceMessageID = messageID
+		}
+	}
+	if req.ToolCallID == "" {
+		req.ToolCallID = msg.Header.Get(contextx.ToolCallIDHeader)
+	}
+	if req.ToolName == "" {
+		req.ToolName = msg.Header.Get(contextx.ToolNameHeader)
+	}
 
 	logger.Debugf(ctx, "[SDK:handleMessage] received: traceId=%s, method=%s, router=%s, user=%s, source=%s, bodyLen=%d",
 		req.TraceId, req.Method, req.Router, req.RequestUser, req.ClientSource, len(req.Body))

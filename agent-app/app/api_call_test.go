@@ -38,6 +38,18 @@ func TestAPICallPropagatesRequestContext(t *testing.T) {
 		if got := r.Header.Get(contextx.ClientSourceHeader); got != "agent" {
 			t.Fatalf("client source header = %q, want agent", got)
 		}
+		if got := r.Header.Get(contextx.InitiatorUserHeader); got != "alice" {
+			t.Fatalf("initiator header = %q, want alice", got)
+		}
+		if got := r.Header.Get(contextx.WorkspaceMessageIDHeader); got != "42" {
+			t.Fatalf("workspace message header = %q, want 42", got)
+		}
+		if got := r.Header.Get(contextx.ToolCallIDHeader); got != "call-1" {
+			t.Fatalf("tool call header = %q, want call-1", got)
+		}
+		if got := r.Header.Get(contextx.ToolNameHeader); got != "run_table_search" {
+			t.Fatalf("tool name header = %q, want run_table_search", got)
+		}
 
 		var body map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -55,13 +67,17 @@ func TestAPICallPropagatesRequestContext(t *testing.T) {
 
 	a := &App{}
 	ctx, err := a.NewContext(context.Background(), &dto.RequestAppReq{
-		TraceId:         "trace-1",
-		RequestUser:     "alice",
-		RequestUserDept: "/org/dev",
-		Token:           "token-1",
-		ClientSource:    "agent",
-		Method:          "POST",
-		Router:          "/workspace/search.form",
+		TraceId:            "trace-1",
+		RequestUser:        "alice",
+		RequestUserDept:    "/org/dev",
+		Token:              "token-1",
+		ClientSource:       "agent",
+		Method:             "POST",
+		Router:             "/workspace/search.form",
+		InitiatorUser:      "alice",
+		WorkspaceMessageID: 42,
+		ToolCallID:         "call-1",
+		ToolName:           "run_table_search",
 	})
 	if err != nil {
 		t.Fatalf("NewContext returned error: %v", err)

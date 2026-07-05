@@ -70,6 +70,10 @@ func (a *App) NewContext(ctx context.Context, req *dto.RequestAppReq) (*Context,
 		WorkspaceSessionID:    strings.TrimSpace(req.WorkspaceSessionID),
 		WorkspaceSessionTitle: strings.TrimSpace(req.WorkspaceSessionTitle),
 		WorkspaceRole:         strings.TrimSpace(req.WorkspaceRole),
+		InitiatorUser:         strings.TrimSpace(req.InitiatorUser),
+		WorkspaceMessageID:    req.WorkspaceMessageID,
+		ToolCallID:            strings.TrimSpace(req.ToolCallID),
+		ToolName:              strings.TrimSpace(req.ToolName),
 	})
 	token := req.Token
 	anonymousToken := strings.TrimSpace(req.AnonymousToken)

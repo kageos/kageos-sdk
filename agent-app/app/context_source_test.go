@@ -68,6 +68,10 @@ func TestNewContextCarriesSourceDisplayAndWorkspaceSession(t *testing.T) {
 		WorkspaceSessionID:    "session-1",
 		WorkspaceSessionTitle: "定时会议巡检",
 		WorkspaceRole:         "automation_operator",
+		InitiatorUser:         "alice",
+		WorkspaceMessageID:    42,
+		ToolCallID:            "call-1",
+		ToolName:              "run_table_add",
 	})
 	if err != nil {
 		t.Fatalf("NewContext returned error: %v", err)
@@ -87,6 +91,18 @@ func TestNewContextCarriesSourceDisplayAndWorkspaceSession(t *testing.T) {
 	}
 	if got := ctx.GetWorkspaceRole(); got != "automation_operator" {
 		t.Fatalf("workspace role = %q", got)
+	}
+	if got := contextx.GetInitiatorUser(ctx); got != "alice" {
+		t.Fatalf("initiator user = %q", got)
+	}
+	if got := contextx.GetWorkspaceMessageID(ctx); got != "42" {
+		t.Fatalf("workspace message id = %q", got)
+	}
+	if got := contextx.GetToolCallID(ctx); got != "call-1" {
+		t.Fatalf("tool call id = %q", got)
+	}
+	if got := contextx.GetToolName(ctx); got != "run_table_add" {
+		t.Fatalf("tool name = %q", got)
 	}
 }
 

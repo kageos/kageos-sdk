@@ -114,9 +114,7 @@ func getOrInitMySQLDBForAccess(packagePath string, capability *dto.AppDBCapabili
 	if err != nil {
 		return nil, err
 	}
-	db, err := gorm.Open(gormmysql.Open(dsn), &gorm.Config{
-		Logger: gormLogger.Default.LogMode(gormLogger.Warn),
-	})
+	db, err := gorm.Open(gormmysql.Open(dsn), runtimeAppGORMConfig())
 	if err != nil {
 		logger.Errorf(context.Background(), "打开 MySQL 应用数据库失败 package=%s db=%s: %v", packagePath, resp.DatabaseName, err)
 		return nil, err
@@ -128,6 +126,13 @@ func getOrInitMySQLDBForAccess(packagePath string, capability *dto.AppDBCapabili
 	dbs[cacheKey] = &dbCacheEntry{db: db, dialect: "mysql", lastUsed: time.Now()}
 	logger.Infof(context.Background(), "MySQL 应用数据库连接已创建: package=%s access=%s db=%s", packagePath, resp.Access, resp.DatabaseName)
 	return db, nil
+}
+
+func runtimeAppGORMConfig() *gorm.Config {
+	return &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+		Logger:                                   gormLogger.Default.LogMode(gormLogger.Warn),
+	}
 }
 
 func resolveRuntimeAppDatabase(packagePath string, capability *dto.AppDBCapability, access string) (*dto.AppDBResolveResp, error) {
