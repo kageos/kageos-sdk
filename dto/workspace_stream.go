@@ -12,6 +12,7 @@ const (
 	WorkspaceStreamEventModelContextPlan     = "model_context_plan"
 	WorkspaceStreamEventToolCall             = "tool_call"
 	WorkspaceStreamEventToolCallsStreamDelta = "tool_calls_stream_delta"
+	WorkspaceStreamEventThinking             = "thinking"
 	WorkspaceStreamEventContent              = "content"
 	WorkspaceStreamEventDone                 = "done"
 	WorkspaceStreamEventError                = "error"
@@ -56,6 +57,10 @@ type WorkspaceStreamContent struct {
 	Content string `json:"content"`
 }
 
+type WorkspaceStreamThinking struct {
+	Content string `json:"content"`
+}
+
 type WorkspaceModelContextPlan struct {
 	ProtocolVersion string                         `json:"protocol_version"`
 	SessionID       string                         `json:"session_id"`
@@ -69,6 +74,7 @@ type WorkspaceModelContextPlan struct {
 	Tools           WorkspaceModelContextTools     `json:"tools"`
 	CachePlan       WorkspaceModelContextCachePlan `json:"cache_plan"`
 	LLM             *WorkspaceModelContextLLM      `json:"llm,omitempty"`
+	Budget          *WorkspaceModelContextBudget   `json:"budget,omitempty"`
 }
 
 type WorkspaceModelContextRole struct {
@@ -104,6 +110,7 @@ type WorkspaceModelContextMessages struct {
 	ExcludedStoredMessages      int                               `json:"excluded_stored_messages"`
 	ExcludedByAnchor            int                               `json:"excluded_by_anchor"`
 	ExcludedDisplayOnly         int                               `json:"excluded_display_only"`
+	ExcludedByReduction         int                               `json:"excluded_by_reduction,omitempty"`
 	Included                    []WorkspaceModelContextMessageRef `json:"included,omitempty"`
 	Excluded                    []WorkspaceModelContextMessageRef `json:"excluded,omitempty"`
 	Truncated                   bool                              `json:"truncated,omitempty"`
@@ -141,16 +148,20 @@ type WorkspaceModelContextDocs struct {
 }
 
 type WorkspaceModelContextTools struct {
-	RequestedNames []string `json:"requested_names,omitempty"`
-	LLMTools       []string `json:"llm_tools,omitempty"`
-	LLMToolCount   int      `json:"llm_tool_count"`
-	Policy         string   `json:"policy"`
+	RequestedNames       []string `json:"requested_names,omitempty"`
+	LLMTools             []string `json:"llm_tools,omitempty"`
+	LLMToolCount         int      `json:"llm_tool_count"`
+	RoleAllowedTools     []string `json:"role_allowed_tools,omitempty"`
+	RoleAllowedToolCount int      `json:"role_allowed_tool_count,omitempty"`
+	Policy               string   `json:"policy"`
 }
 
 type WorkspaceModelContextCachePlan struct {
 	StablePrefixStrategy string                            `json:"stable_prefix_strategy"`
 	StablePrefixItems    []string                          `json:"stable_prefix_items,omitempty"`
 	ActualUsageField     string                            `json:"actual_usage_field"`
+	PromptCacheKey       string                            `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string                            `json:"prompt_cache_retention,omitempty"`
 	Result               *WorkspaceModelContextCacheResult `json:"result,omitempty"`
 }
 
@@ -174,6 +185,18 @@ type WorkspaceModelContextLLM struct {
 	MaxTokens    int    `json:"max_tokens,omitempty"`
 	MessageCount int    `json:"message_count"`
 	ToolCount    int    `json:"tool_count"`
+}
+
+type WorkspaceModelContextBudget struct {
+	ReducerLevel         int    `json:"reducer_level"`
+	ReducerReason        string `json:"reducer_reason,omitempty"`
+	EstimatedInputTokens int    `json:"estimated_input_tokens"`
+	EstimatedToolTokens  int    `json:"estimated_tool_tokens"`
+	OutputReserveTokens  int    `json:"output_reserve_tokens"`
+	EstimatedTotalTokens int    `json:"estimated_total_tokens"`
+	SoftLimitTokens      int    `json:"soft_limit_tokens"`
+	TokensUntilSoftLimit int    `json:"tokens_until_soft_limit"`
+	Status               string `json:"status"`
 }
 
 type WorkspaceStreamDone struct {

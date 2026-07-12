@@ -72,7 +72,7 @@ func (t *AppTransport) PublishMessageCommand(ctx context.Context, envelope *dto.
 		ctx = context.Background()
 	}
 
-	msg, err := msgx.BuildJSONRequest(ctx, subjects.MessageSendCommandSubject, envelope)
+	msg, err := buildMessageCommand(ctx, envelope)
 	if err != nil {
 		return fmt.Errorf("build message command: %w", err)
 	}
@@ -82,6 +82,15 @@ func (t *AppTransport) PublishMessageCommand(ctx context.Context, envelope *dto.
 	logger.Debugf(ctx, "[PublishMessage] published async to %s, from=%s full_code_path=%s to_users=%s title=%s",
 		subjects.MessageSendCommandSubject, envelope.Meta.From, envelope.Meta.FullCodePath, envelope.Message.ToUsers, envelope.Message.Title)
 	return nil
+}
+
+func buildMessageCommand(ctx context.Context, envelope *dto.MessageSendEnvelope) (*nats.Msg, error) {
+	msg, err := msgx.BuildJSONRequest(ctx, subjects.MessageSendCommandSubject, envelope)
+	if err != nil {
+		return nil, err
+	}
+	msg.Header.Del(contextx.TokenHeader)
+	return msg, nil
 }
 
 func (t *AppTransport) PublishDiscoveryResponse(runtimeID string, startTime time.Time) error {

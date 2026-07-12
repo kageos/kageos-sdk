@@ -24,12 +24,12 @@ import (
 )
 
 var (
-	app                *App
-	initOnce           sync.Once
-	initErr            error // 记录初始化错误
-	natsURLResolveOnce sync.Once
-	natsURLResolved    string
-	natsURLResolveErr  error
+	app                       *App
+	initOnce                  sync.Once
+	initErr                   error // 记录初始化错误
+	natsConnectionResolveOnce sync.Once
+	natsConnectionResolved    appNATSConnectionConfig
+	natsConnectionResolveErr  error
 )
 
 func initApp() {
@@ -172,7 +172,7 @@ func appLogLevel() string {
 }
 
 func connectAppNATS() (*nats.Conn, error) {
-	natsURL, err := resolveAppNATSURLOnce()
+	connectionConfig, err := resolveAppNATSConnectionOnce()
 	if err != nil {
 		logger.Errorf(context.Background(), "Failed to resolve NATS endpoint: %v", err)
 		return nil, err
@@ -184,46 +184,62 @@ func connectAppNATS() (*nats.Conn, error) {
 			logger.Errorf(context.Background(), "NATS error: %v", err)
 		}),
 	}
-	return connectAppNATSCandidate(natsURL, name, options...)
+	authOptions, err := connectionConfig.natsOptions()
+	if err != nil {
+		return nil, fmt.Errorf("load app NATS authentication: %w", err)
+	}
+	options = append(options, authOptions...)
+	return connectAppNATSCandidate(connectionConfig.url, name, options...)
 }
 
-func resolveAppNATSURLOnce() (string, error) {
-	natsURLResolveOnce.Do(func() {
-		natsURLResolved, natsURLResolveErr = probeAppNATSURL(resolveNATSURL())
+func resolveAppNATSConnectionOnce() (appNATSConnectionConfig, error) {
+	natsConnectionResolveOnce.Do(func() {
+		connectionConfig, err := resolveAppNATSConnectionConfig()
+		if err != nil {
+			natsConnectionResolveErr = err
+			return
+		}
+		natsConnectionResolved, natsConnectionResolveErr = probeAppNATSConnection(connectionConfig)
 	})
-	return natsURLResolved, natsURLResolveErr
+	return natsConnectionResolved, natsConnectionResolveErr
 }
 
-func probeAppNATSURL(natsURL string) (string, error) {
-	candidates := netprobe.URLCandidates(natsURL)
+func probeAppNATSConnection(connectionConfig appNATSConnectionConfig) (appNATSConnectionConfig, error) {
+	candidates := netprobe.URLCandidates(connectionConfig.url)
 	if len(candidates) <= 1 {
-		return natsURL, nil
+		return connectionConfig, nil
 	}
 
 	var failures []string
 	for _, candidate := range candidates {
-		err := probeNATSStatus(candidate, time.Second)
-		if err == nil {
-			if candidate != natsURL {
-				logger.Infof(context.Background(), "NATS endpoint auto-resolved: %s -> %s", redactURLForLog(natsURL), redactURLForLog(candidate))
-			}
-			return candidate, nil
+		authOptions, err := connectionConfig.natsOptions()
+		if err != nil {
+			return connectionConfig, fmt.Errorf("load app NATS authentication: %w", err)
 		}
-		failures = append(failures, fmt.Sprintf("%s: %v", candidate, err))
+		err = probeNATSStatus(candidate, time.Second, authOptions...)
+		if err == nil {
+			if candidate != connectionConfig.url {
+				logger.Infof(context.Background(), "NATS endpoint auto-resolved: %s -> %s", redactURLForLog(connectionConfig.url), redactURLForLog(candidate))
+			}
+			connectionConfig.url = candidate
+			return connectionConfig, nil
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", redactURLForLog(candidate), err))
 	}
 
 	err := fmt.Errorf("failed to resolve NATS candidates: %s", strings.Join(failures, "; "))
 	logger.Errorf(context.Background(), "%v", err)
-	return natsURL, err
+	return connectionConfig, err
 }
 
-func probeNATSStatus(natsURL string, timeout time.Duration) error {
-	conn, err := nats.Connect(
-		natsURL,
+func probeNATSStatus(natsURL string, timeout time.Duration, options ...nats.Option) error {
+	connectOptions := []nats.Option{
 		nats.Name("agent-app-nats-probe"),
 		nats.Timeout(timeout),
 		nats.NoReconnect(),
-	)
+	}
+	connectOptions = append(connectOptions, options...)
+	conn, err := nats.Connect(natsURL, connectOptions...)
 	if err != nil {
 		return err
 	}
@@ -250,17 +266,23 @@ func redactURLForLog(raw string) string {
 	if raw == "" {
 		return ""
 	}
+	servers := strings.Split(raw, ",")
+	for i, server := range servers {
+		servers[i] = redactSingleURLForLog(strings.TrimSpace(server))
+	}
+	return strings.Join(servers, ",")
+}
+
+func redactSingleURLForLog(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return "<redacted-url>"
 	}
 	if parsed.User != nil {
-		username := parsed.User.Username()
-		if username == "" {
-			parsed.User = url.UserPassword("", "****")
-		} else {
-			parsed.User = url.UserPassword(username, "****")
-		}
+		// A one-part NATS userinfo value is commonly an auth token, not a
+		// harmless username. Remove the entire userinfo component so neither
+		// token auth nor user/password auth can reach logs.
+		parsed.User = nil
 	}
 	if parsed.RawQuery != "" {
 		parsed.RawQuery = "redacted=true"

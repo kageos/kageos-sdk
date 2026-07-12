@@ -84,7 +84,7 @@ func (r *OnSelectFuzzyReq) GetValues() interface{} {
 type SelectFuzzyItem struct {
 	Value       interface{}            `json:"value"`
 	Label       string                 `json:"label"`
-	Icon        string                 `json:"icon"`
+	Files       string                 `json:"files"`
 	DisplayInfo map[string]interface{} `json:"display_info"`
 }
 

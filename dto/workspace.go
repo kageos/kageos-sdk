@@ -7,6 +7,13 @@ import (
 	"github.com/kageos/kageos-sdk/pkg/gormx/models"
 )
 
+const (
+	WorkspaceMessageContextInclude     = "include"
+	WorkspaceMessageContextDisplayOnly = "display_only"
+	WorkspaceMessageContextArtifact    = "artifact"
+	WorkspaceMessageContextCurrentTurn = "current_turn"
+)
+
 // WorkspaceChatReq 工作台对话请求（只认 LLM，单模式）
 type WorkspaceChatReq struct {
 	FullCodePath string       `json:"full_code_path" binding:"required"` // 目录完整路径（必填）
@@ -22,7 +29,7 @@ type WorkspaceMsg struct {
 	Content           string `json:"content" binding:"required"`
 	DisplayContent    string `json:"display_content,omitempty"`    // 前端展示内容，模型仍使用 content
 	Files             string `json:"files,omitempty"`              // 文件引用字符串，格式 bucket/object_key，多文件逗号分隔
-	ContextUsage      string `json:"context_usage,omitempty"`      // include/display_only/artifact
+	ContextUsage      string `json:"context_usage,omitempty"`      // include/display_only/artifact/current_turn
 	ArtifactKind      string `json:"artifact_kind,omitempty"`      // 结构化产物类型
 	InteractionAction string `json:"interaction_action,omitempty"` // 处理阻塞交互的动作，如 revise_prd/continue_development
 }
@@ -54,23 +61,36 @@ type ToolResultMetadata struct {
 
 // ListWorkspaceSessionsReq 获取工作台会话列表请求
 type ListWorkspaceSessionsReq struct {
-	FullCodePath string `json:"full_code_path" form:"full_code_path" binding:"required"` // 必填：服务目录完整路径
-	Page         int    `json:"page" form:"page"`                                        // 页码，从1开始，默认1
-	PageSize     int    `json:"page_size" form:"page_size"`                              // 每页数量，默认20
+	FullCodePath     string `json:"full_code_path" form:"full_code_path" binding:"required"` // 必填：服务目录完整路径
+	Page             int    `json:"page" form:"page"`                                        // 页码，从1开始，默认1
+	PageSize         int    `json:"page_size" form:"page_size"`                              // 每页数量，默认20
+	SessionScope     string `json:"session_scope" form:"session_scope"`                      // human（默认）/automation/all
+	AutomationTaskID int64  `json:"automation_task_id" form:"automation_task_id"`            // 选择某个自动化 Agent 时传任务 ID
 }
 
 // ListWorkspaceSessionsResp 获取工作台会话列表响应
 type ListWorkspaceSessionsResp struct {
-	Sessions []*WorkspaceSessionItem `json:"sessions"`  // 会话列表
-	Total    int64                   `json:"total"`     // 总数
-	Page     int                     `json:"page"`      // 当前页码
-	PageSize int                     `json:"page_size"` // 每页数量
+	Sessions         []*WorkspaceSessionItem         `json:"sessions"`          // 会话列表
+	AutomationAgents []*WorkspaceAutomationAgentItem `json:"automation_agents"` // 当前目录有历史会话的自动化 Agent
+	Total            int64                           `json:"total"`             // 总数
+	Page             int                             `json:"page"`              // 当前页码
+	PageSize         int                             `json:"page_size"`         // 每页数量
+}
+
+type WorkspaceAutomationAgentItem struct {
+	TaskID    int64  `json:"task_id"`
+	TaskCode  string `json:"task_code,omitempty"`
+	TaskTitle string `json:"task_title"`
 }
 
 // WorkspaceSessionItem 工作台会话项
 type WorkspaceSessionItem struct {
 	SessionID                   string                `json:"session_id"`                                // 会话ID
 	Title                       string                `json:"title"`                                     // 会话标题
+	Source                      string                `json:"source,omitempty"`                          // workspace / automation_agent
+	AutomationTaskID            int64                 `json:"automation_task_id,omitempty"`              // 自动化 Agent 任务 ID
+	AutomationTaskCode          string                `json:"automation_task_code,omitempty"`            // 自动化 Agent 稳定 Code
+	AutomationTaskTitle         string                `json:"automation_task_title,omitempty"`           // 自动化 Agent 名称
 	User                        string                `json:"user"`                                      // 创建该会话的用户
 	ModeCode                    string                `json:"mode_code"`                                 // 工作台模式代码
 	Status                      string                `json:"status"`                                    // 会话状态（active/generating/output/pending_confirmation/pending_build_repair/done/cancelled；pending_test 为历史兼容）
@@ -178,6 +198,7 @@ type WorkspaceMessageInfo struct {
 	User             string                         `json:"user"`                         // 创建该消息的用户
 	Content          string                         `json:"content"`                      // 消息内容（user 仅存用户文字，不含 <files> 块）
 	DisplayContent   string                         `json:"display_content,omitempty"`    // 前端展示内容，空则展示 content
+	ThinkingContent  string                         `json:"thinking_content,omitempty"`   // assistant 思考内容，不进入模型上下文
 	Files            *string                        `json:"files,omitempty"`              // 用户消息附带的文件引用字符串，仅 user 角色可能有
 	ToolCalls        []WorkspaceChatToolCallSummary `json:"tool_calls,omitempty"`         // 工具调用列表（仅assistant角色）
 	LLMConfigID      int64                          `json:"llm_config_id,omitempty"`      // assistant 消息生成时使用的 LLM 配置 ID
@@ -211,19 +232,53 @@ type ToolDef struct {
 	OutputSchema map[string]interface{} `json:"output_schema,omitempty"` // 响应参数 → JSON Schema（可选，后续从 function schema 转换）
 }
 
+// BatchWorkspaceToolDetailsReq 批量获取内置工作台工具展示详情。
+type BatchWorkspaceToolDetailsReq struct {
+	Names         []string `json:"names"`          // 工具名，支持 send_notification、tool:send_notification、<tool:send_notification>
+	IncludeSchema bool     `json:"include_schema"` // 是否返回完整 JSON Schema；hover 等轻量场景默认 false
+}
+
+type WorkspaceToolField struct {
+	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type WorkspaceToolDetail struct {
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	Token        string                 `json:"token"`
+	TypeLabel    string                 `json:"type_label"`
+	InputFields  []WorkspaceToolField   `json:"input_fields,omitempty"`
+	InputSchema  map[string]interface{} `json:"input_schema,omitempty"`
+	OutputSchema map[string]interface{} `json:"output_schema,omitempty"`
+}
+
+type BatchWorkspaceToolDetailsResp struct {
+	Tools   []WorkspaceToolDetail `json:"tools"`
+	Missing []string              `json:"missing,omitempty"`
+}
+
 // ----- 以下为 app-server 工作空间资源更新接口使用（canonical 标识为 resource_path=/user/app） -----
 
 // UpdateWorkspaceReq 更新工作空间请求（只更新 MySQL 如 Admins；canonical 标识为 resource_path）
 type UpdateWorkspaceReq struct {
-	ResourcePath string `json:"resource_path,omitempty"` // 工作空间资源路径，规范为 /user/app
-	Admins       string `json:"admins"`                  // 管理员列表，逗号分隔
+	ResourcePath          string  `json:"resource_path,omitempty"`                           // 工作空间资源路径，规范为 /user/app
+	Name                  *string `json:"name,omitempty"`                                    // 展示名称；nil 表示不更新，不影响 code、URL 或运行时目录
+	AccessMode            *string `json:"access_mode,omitempty"`                             // 访问模式：permissioned/open_collaboration；nil 表示不更新
+	Admins                *string `json:"admins,omitempty"`                                  // 管理员列表，逗号分隔；nil 表示不更新
+	HideUnauthorizedNodes *bool   `json:"hide_unauthorized_nodes,omitempty" example:"false"` // 是否隐藏当前用户无 read 权限的目录节点；nil 表示不更新
 }
 
 // UpdateWorkspaceResp 更新工作空间响应
 type UpdateWorkspaceResp struct {
-	User   string `json:"user"`
-	App    string `json:"app"`
-	Admins string `json:"admins"`
+	User                  string `json:"user"`
+	App                   string `json:"app"`
+	Name                  string `json:"name"`
+	AccessMode            string `json:"access_mode"`
+	Admins                string `json:"admins"`
+	HideUnauthorizedNodes bool   `json:"hide_unauthorized_nodes"`
 }
 
 // ----- 以下为工作台环境信息接口使用 -----
@@ -277,7 +332,7 @@ type GetWorkspaceContextResp struct {
 	DepartmentFullNamePath string                    `json:"department_full_name_path"` // 当前用户部门中文名称路径（仅展示用，如 技术部/后端组）
 	Directory              WorkspaceContextDirectory `json:"directory"`                 // 当前目录信息
 	Children               []WorkspaceContextNode    `json:"children"`                  // 子节点列表
-	Files                  []WorkspaceContextFile    `json:"files"`                     // 代码文件列表
+	Files                  []WorkspaceContextFile    `json:"files"`                     // 文本/代码文件列表
 }
 
 // ReplaceItem 单次替换项（预期次数不传或 0 表示默认 1）

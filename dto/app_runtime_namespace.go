@@ -17,11 +17,13 @@ type NamespaceCreateResp struct {
 }
 
 type CreateAppReq struct {
-	User     string `json:"user" swaggerignore:"true"`                    // 租户用户名（应用所有者，决定应用的所有权）- 内部字段，不显示在文档中
-	Code     string `json:"code" binding:"required" example:"myapp"`      // 应用名
-	Name     string `json:"name" binding:"required" example:"腾讯oa系统"`     // 应用名
-	IsPublic *bool  `json:"is_public,omitempty" example:"true"`           // 是否公开，默认 true（公开）
-	Admins   string `json:"admins,omitempty" example:"user1,user2,user3"` // 管理员列表，逗号分隔的用户名
+	User                  string `json:"user" swaggerignore:"true"`                         // 租户用户名（应用所有者，决定应用的所有权）- 内部字段，不显示在文档中
+	Code                  string `json:"code" binding:"required" example:"myapp"`           // 应用名
+	Name                  string `json:"name" binding:"required" example:"腾讯oa系统"`          // 应用名
+	IsPublic              *bool  `json:"is_public,omitempty" example:"true"`                // 是否公开，默认 true（公开）
+	AccessMode            string `json:"access_mode,omitempty" example:"permissioned"`      // 访问模式：permissioned/open_collaboration，默认 permissioned
+	HideUnauthorizedNodes *bool  `json:"hide_unauthorized_nodes,omitempty" example:"false"` // 是否隐藏当前用户无 read 权限的目录节点，默认 false
+	Admins                string `json:"admins,omitempty" example:"user1,user2,user3"`      // 管理员列表，逗号分隔的用户名
 }
 
 type CreateAppResp struct {
@@ -159,7 +161,8 @@ type PackageInfo struct {
 	Desc        string            `json:"desc"`                  // 描述
 	RouterGroup string            `json:"router_group"`          // 路由组路径（如 "/plugins/pdf"）
 	FullPath    string            `json:"full_path"`             // 完整路径（如 "/user/app/plugins/pdf"）
-	AgentTasks  []AgentTaskConfig `json:"agent_tasks,omitempty"` // package 出厂默认定时会话模板
+	AgentTasks  []AgentTaskConfig `json:"agent_tasks,omitempty"` // package 出厂默认 Agent 任务模板
+	Docs        []DocSeedConfig   `json:"docs,omitempty"`        // package 出厂默认文档种子
 }
 
 type AgentTaskConfig struct {
@@ -177,6 +180,17 @@ type AgentTaskConfig struct {
 	LLMConfigID        int64  `json:"llm_config_id,omitempty"`
 	MaxDurationSeconds int64  `json:"max_duration_seconds,omitempty"`
 	Policy             string `json:"policy,omitempty"`
+}
+
+type DocSeedConfig struct {
+	Code        string `json:"code"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Tags        string `json:"tags,omitempty"`
+	Content     string `json:"content"`
+	Format      string `json:"format,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Policy      string `json:"policy,omitempty"`
 }
 
 type DiffData struct {
@@ -353,21 +367,31 @@ type GetAppsResp struct {
 	PageInfoResp
 }
 
+// BootstrapPersonalWorkspaceResp 是当前 JWT 用户进入工作台时获取的默认个人空间。
+// App 始终可直接用于前端路由：/workspace/{user}/{code}。
+type BootstrapPersonalWorkspaceResp struct {
+	App     AppInfo `json:"app"`
+	Created bool    `json:"created"` // 仅本次请求实际创建了 home 时为 true
+}
+
 // AppInfo 应用信息
 type AppInfo struct {
-	ID        int64  `json:"id" example:"1"`                           // 应用ID
-	User      string `json:"user" example:"beiluo"`                    // 租户名
-	Code      string `json:"code" example:"myapp"`                     // 应用代码
-	Name      string `json:"name" example:"我的应用"`                      // 应用名称
-	Status    string `json:"status" example:"enabled"`                 // 状态: enabled(启用), disabled(禁用)
-	Version   string `json:"version" example:"v1"`                     // 版本
-	NatsID    int64  `json:"nats_id" example:"1"`                      // NATS ID
-	HostID    int64  `json:"host_id" example:"1"`                      // 主机ID
-	IsPublic  bool   `json:"is_public" example:"true"`                 // 是否公开
-	Admins    string `json:"admins,omitempty" example:"user1,user2"`   // 管理员列表，逗号分隔的用户名
-	Type      int    `json:"type" example:"0"`                         // 应用类型：0=用户空间，1=系统空间
-	CreatedAt string `json:"created_at" example:"2006-01-02 15:04:05"` // 创建时间
-	UpdatedAt string `json:"updated_at" example:"2006-01-02 15:04:05"` // 更新时间
+	ID                    int64  `json:"id" example:"1"`                           // 应用ID
+	User                  string `json:"user" example:"beiluo"`                    // 租户名
+	Code                  string `json:"code" example:"myapp"`                     // 应用代码
+	Name                  string `json:"name" example:"我的应用"`                      // 应用名称
+	Status                string `json:"status" example:"enabled"`                 // 状态: enabled(启用), disabled(禁用)
+	Version               string `json:"version" example:"v1"`                     // 版本
+	NatsID                int64  `json:"nats_id" example:"1"`                      // NATS ID
+	HostID                int64  `json:"host_id" example:"1"`                      // 主机ID
+	IsPublic              bool   `json:"is_public" example:"true"`                 // 是否公开
+	IsPersonalWorkspace   bool   `json:"is_personal_workspace" example:"false"`    // 是否为系统初始化的个人默认空间
+	AccessMode            string `json:"access_mode" example:"permissioned"`       // 访问模式：permissioned/open_collaboration
+	HideUnauthorizedNodes bool   `json:"hide_unauthorized_nodes" example:"false"`  // 是否隐藏当前用户无 read 权限的目录节点
+	Admins                string `json:"admins,omitempty" example:"user1,user2"`   // 管理员列表，逗号分隔的用户名
+	Type                  int    `json:"type" example:"0"`                         // 应用类型：0=用户空间，1=系统空间
+	CreatedAt             string `json:"created_at" example:"2006-01-02 15:04:05"` // 创建时间
+	UpdatedAt             string `json:"updated_at" example:"2006-01-02 15:04:05"` // 更新时间
 }
 
 // GetAppDetailReq 获取应用详情请求
