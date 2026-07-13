@@ -81,18 +81,16 @@ func (c *Context) fetchBatchUploadTokens(fileInfos []*FileInfo) (*dto.BatchGetUp
 
 func (c *Context) buildBatchUploadTokenReq(fileInfos []*FileInfo) *dto.BatchGetUploadTokenReq {
 	batchTokenReq := &dto.BatchGetUploadTokenReq{
-		Files:        make([]dto.GetUploadTokenReq, 0, len(fileInfos)),
-		UploadSource: dto.UploadSourceServer,
+		Files: make([]dto.GetUploadTokenReq, 0, len(fileInfos)),
 	}
 
 	for _, info := range fileInfos {
 		batchTokenReq.Files = append(batchTokenReq.Files, dto.GetUploadTokenReq{
-			Router:       c.msg.GetFullRouter(),
-			FileName:     info.FileName,
-			ContentType:  info.ContentType,
-			FileSize:     info.FileSize,
-			Hash:         info.Hash,
-			UploadSource: dto.UploadSourceServer,
+			Router:      c.msg.GetFullRouter(),
+			FileName:    info.FileName,
+			ContentType: info.ContentType,
+			FileSize:    info.FileSize,
+			Hash:        info.Hash,
 		})
 	}
 	return batchTokenReq

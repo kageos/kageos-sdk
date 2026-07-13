@@ -151,18 +151,12 @@ func TestBuildBatchUploadTokenReq(t *testing.T) {
 		Hash:        "sha256",
 	}})
 
-	if req.UploadSource != dto.UploadSourceServer {
-		t.Fatalf("expected server upload source, got %s", req.UploadSource)
-	}
 	if len(req.Files) != 1 {
 		t.Fatalf("expected one file request, got %d", len(req.Files))
 	}
 	fileReq := req.Files[0]
 	if fileReq.Router != "/alice/demo/tools/export" {
 		t.Fatalf("unexpected router: %s", fileReq.Router)
-	}
-	if fileReq.UploadSource != dto.UploadSourceServer {
-		t.Fatalf("expected file server upload source, got %s", fileReq.UploadSource)
 	}
 	if fileReq.FileName != "report.csv" || fileReq.FileSize != 42 || fileReq.ContentType != "text/csv" || fileReq.Hash != "sha256" {
 		t.Fatalf("unexpected file request: %#v", fileReq)
