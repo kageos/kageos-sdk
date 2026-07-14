@@ -116,6 +116,43 @@ func TestNatsTraceContextPreservesClientSource(t *testing.T) {
 	}
 }
 
+func TestNatsTraceContextRoundTripsTrustedIdentityAndAuditFields(t *testing.T) {
+	want := make(map[string]string)
+	ctx := context.Background()
+	for _, key := range TrustedIdentityHeaderNames() {
+		value := key + "-value"
+		want[key] = value
+		ctx = context.WithValue(ctx, key, value)
+	}
+	ctx = WithToken(ctx, "token-value")
+	ctx = WithTraceId(ctx, "trace-value")
+
+	msg := CtxToTraceNats(ctx, "demo")
+	got := NatsTraceContext(msg)
+
+	for key, value := range want {
+		if headerValue := msg.Header.Get(key); headerValue != value {
+			t.Fatalf("nats header %s = %q, want %q", key, headerValue, value)
+		}
+		if contextValue := getStringFromContextOrHeader(got, key); contextValue != value {
+			t.Fatalf("context value %s = %q, want %q", key, contextValue, value)
+		}
+	}
+	if value := GetToken(got); value != "token-value" {
+		t.Fatalf("token = %q, want token-value", value)
+	}
+	if value := GetTraceId(got); value != "trace-value" {
+		t.Fatalf("trace = %q, want trace-value", value)
+	}
+}
+
+func TestNatsTraceContextAcceptsNilMessage(t *testing.T) {
+	ctx := NatsTraceContext(nil)
+	if ctx == nil {
+		t.Fatal("NatsTraceContext(nil) returned nil")
+	}
+}
+
 func TestCtxToTraceNatsPreservesClientSource(t *testing.T) {
 	ctx := WithClientSource(context.Background(), "agent")
 	ctx = WithInitiatorUser(ctx, "bob")
