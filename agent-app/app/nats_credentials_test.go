@@ -99,6 +99,26 @@ func TestRedactURLForLogRedactsEveryServerInList(t *testing.T) {
 	}
 }
 
+func TestAppNATSServerCandidatesPreservePriorityAndAuthentication(t *testing.T) {
+	raw := "nats://private-token@host.containers.internal:4222,nats://nats.example.com:4333"
+	got := appNATSServerCandidates(raw)
+	want := []string{
+		"nats://private-token@host.containers.internal:4222",
+		"nats://private-token@127.0.0.1:4222",
+		"nats://private-token@host.docker.internal:4222",
+		"nats://private-token@localhost:4222",
+		"nats://nats.example.com:4333",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("appNATSServerCandidates() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidate[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestLoadAppNATSConnectionConfigRejectsUnknownSecretFormat(t *testing.T) {
 	credentialsFile := filepath.Join(t.TempDir(), "nats")
 	if err := os.WriteFile(credentialsFile, []byte("definitely-not-a-nats-credential"), 0o600); err != nil {
