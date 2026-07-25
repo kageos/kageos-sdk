@@ -24,12 +24,9 @@ import (
 )
 
 var (
-	app                       *App
-	initOnce                  sync.Once
-	initErr                   error // 记录初始化错误
-	natsConnectionResolveOnce sync.Once
-	natsConnectionResolved    appNATSConnectionConfig
-	natsConnectionResolveErr  error
+	app      *App
+	initOnce sync.Once
+	initErr  error // 记录初始化错误
 )
 
 func initApp() {
@@ -172,14 +169,22 @@ func appLogLevel() string {
 }
 
 func connectAppNATS() (*nats.Conn, error) {
-	connectionConfig, err := resolveAppNATSConnectionOnce()
+	connectionConfig, err := resolveAppNATSConnectionConfig()
 	if err != nil {
-		logger.Errorf(context.Background(), "Failed to resolve NATS endpoint: %v", err)
+		logger.Errorf(context.Background(), "Failed to load NATS connection config: %v", err)
 		return nil, err
 	}
+	servers := appNATSServerCandidates(connectionConfig.url)
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("no NATS server configured")
+	}
+	connectionConfig.url = strings.Join(servers, ",")
 
 	name := fmt.Sprintf("agent-app-%s-%s-%s", env.User, env.App, env.Version)
 	options := []nats.Option{
+		// NATS owns initial failover and reconnects across the complete ordered
+		// pool. Keep the configured/local-runtime priority deterministic.
+		nats.DontRandomize(),
 		nats.ErrorHandler(func(nc *nats.Conn, sub *nats.Subscription, err error) {
 			logger.Errorf(context.Background(), "NATS error: %v", err)
 		}),
@@ -192,62 +197,23 @@ func connectAppNATS() (*nats.Conn, error) {
 	return connectAppNATSCandidate(connectionConfig.url, name, options...)
 }
 
-func resolveAppNATSConnectionOnce() (appNATSConnectionConfig, error) {
-	natsConnectionResolveOnce.Do(func() {
-		connectionConfig, err := resolveAppNATSConnectionConfig()
-		if err != nil {
-			natsConnectionResolveErr = err
-			return
-		}
-		natsConnectionResolved, natsConnectionResolveErr = probeAppNATSConnection(connectionConfig)
-	})
-	return natsConnectionResolved, natsConnectionResolveErr
-}
-
-func probeAppNATSConnection(connectionConfig appNATSConnectionConfig) (appNATSConnectionConfig, error) {
-	candidates := netprobe.URLCandidates(connectionConfig.url)
-	if len(candidates) <= 1 {
-		return connectionConfig, nil
-	}
-
-	var failures []string
-	for _, candidate := range candidates {
-		authOptions, err := connectionConfig.natsOptions()
-		if err != nil {
-			return connectionConfig, fmt.Errorf("load app NATS authentication: %w", err)
-		}
-		err = probeNATSStatus(candidate, time.Second, authOptions...)
-		if err == nil {
-			if candidate != connectionConfig.url {
-				logger.Infof(context.Background(), "NATS endpoint auto-resolved: %s -> %s", redactURLForLog(connectionConfig.url), redactURLForLog(candidate))
+func appNATSServerCandidates(raw string) []string {
+	servers := make([]string, 0, 5)
+	seen := make(map[string]struct{})
+	for _, configured := range strings.Split(raw, ",") {
+		for _, candidate := range netprobe.URLCandidates(configured) {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				continue
 			}
-			connectionConfig.url = candidate
-			return connectionConfig, nil
+			if _, exists := seen[candidate]; exists {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			servers = append(servers, candidate)
 		}
-		failures = append(failures, fmt.Sprintf("%s: %v", redactURLForLog(candidate), err))
 	}
-
-	err := fmt.Errorf("failed to resolve NATS candidates: %s", strings.Join(failures, "; "))
-	logger.Errorf(context.Background(), "%v", err)
-	return connectionConfig, err
-}
-
-func probeNATSStatus(natsURL string, timeout time.Duration, options ...nats.Option) error {
-	connectOptions := []nats.Option{
-		nats.Name("agent-app-nats-probe"),
-		nats.Timeout(timeout),
-		nats.NoReconnect(),
-	}
-	connectOptions = append(connectOptions, options...)
-	conn, err := nats.Connect(natsURL, connectOptions...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if conn.Status() != nats.CONNECTED {
-		return fmt.Errorf("unexpected NATS status: %v", conn.Status())
-	}
-	return nil
+	return servers
 }
 
 func connectAppNATSCandidate(natsURL, name string, options ...nats.Option) (*nats.Conn, error) {

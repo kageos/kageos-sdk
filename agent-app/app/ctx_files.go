@@ -18,6 +18,13 @@ type FileInfo struct {
 	File        *os.File // 文件句柄（用于上传）
 }
 
+// ResponseFile 描述一个待上传的响应文件。
+// Name 为空时使用 Path 的文件名；非空时同时作为工作台展示名和下载文件名。
+type ResponseFile struct {
+	Path string
+	Name string
+}
+
 func (c *Context) GetFS() *FS {
 	return &FS{
 		ctx:       c,
@@ -55,6 +62,11 @@ func (c *FS) ResponseFiles(filePaths []string) string {
 
 	// 批量上传
 	return c.ctx.batchUploadFiles(files)
+}
+
+// ResponseFilesWithNames 上传多个文件，并保留调用方指定的展示/下载文件名。
+func (c *FS) ResponseFilesWithNames(files []ResponseFile) string {
+	return c.ctx.batchUploadResponseFiles(files)
 }
 
 // GetTraceOutputDir 获取基于 TraceId 的唯一输出目录

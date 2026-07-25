@@ -139,8 +139,48 @@ func TestCollectPackageInfosIncludesDocsFromPackageContext(t *testing.T) {
 		t.Fatalf("package docs not collected: %#v", got)
 	}
 	doc := got[0].Docs[0]
-	if doc.Code != "runbook" || doc.Name != "运行手册" || doc.Policy != DocCreateIfMissing || doc.Content != "# 物流节点跟进运行手册\n" {
+	if doc.Code != "runbook.docs" || doc.Name != "运行手册" || doc.Policy != DocCreateIfMissing || doc.Content != "# 物流节点跟进运行手册\n" {
 		t.Fatalf("unexpected docs manifest: %#v", doc)
+	}
+}
+
+func TestCollectPackageInfosIncludesNestedDocParentPackages(t *testing.T) {
+	oldUser, oldApp := env.User, env.App
+	env.User, env.App = "alice", "demo"
+	defer func() {
+		env.User, env.App = oldUser, oldApp
+	}()
+
+	app := &App{
+		packageContexts: map[string]*PackageContext{
+			"mail": {
+				Name: "邮箱助理",
+				Docs: []DocManifest{
+					{
+						Code:    "./docs/readme.docs",
+						Name:    "文档/目录说明",
+						Content: "# 邮件场景文档说明\n",
+					},
+				},
+			},
+		},
+	}
+
+	got, err := app.collectPackageInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected mail and mail/docs packages, got %#v", got)
+	}
+	if got[0].FullPath != "/alice/demo/mail" || got[1].FullPath != "/alice/demo/mail/docs" {
+		t.Fatalf("unexpected package paths: %#v", got)
+	}
+	if len(got[0].Docs) != 1 {
+		t.Fatalf("nested doc must remain owned by mail package: %#v", got[0])
+	}
+	if got[0].Docs[0].Code != "docs/readme.docs" || got[0].Docs[0].Name != "文档/目录说明" {
+		t.Fatalf("unexpected nested doc manifest: %#v", got[0].Docs[0])
 	}
 }
 

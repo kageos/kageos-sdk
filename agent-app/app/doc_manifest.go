@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/kageos/kageos-sdk/pkg/logger"
@@ -15,7 +16,7 @@ const (
 // DocManifest describes package-owned seed docs created during app update.
 // It is declarative metadata only; Service Tree docs remain the runtime source of truth.
 type DocManifest struct {
-	Code        string `json:"code"`
+	Code        string `json:"code"` // package 内相对路径，如 "runbook.docs" 或 "./docs/readme.docs"
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
 	Tags        string `json:"tags,omitempty"`
@@ -76,13 +77,9 @@ func compileDocManifests(routerGroup string, docs []DocManifest) ([]CompiledDocM
 }
 
 func compileDocManifest(routerGroup string, index int, doc DocManifest) (CompiledDocManifest, error) {
-	code := strings.Trim(strings.TrimSpace(doc.Code), "/")
-	code = strings.TrimSuffix(code, ".docs")
-	if code == "" {
-		return CompiledDocManifest{}, fmt.Errorf("%s docs #%d code is required", routerGroup, index+1)
-	}
-	if strings.Contains(code, "/") {
-		return CompiledDocManifest{}, fmt.Errorf("%s docs %q code must be a single path segment", routerGroup, code)
+	code, err := normalizeDocManifestCode(doc.Code)
+	if err != nil {
+		return CompiledDocManifest{}, fmt.Errorf("%s docs #%d: %w", routerGroup, index+1, err)
 	}
 	content := strings.TrimSpace(doc.Content)
 	if content == "" {
@@ -97,7 +94,7 @@ func compileDocManifest(routerGroup string, index int, doc DocManifest) (Compile
 	}
 	name := strings.TrimSpace(doc.Name)
 	if name == "" {
-		name = code
+		name = strings.TrimSuffix(path.Base(code), ".docs")
 	}
 	format := strings.TrimSpace(doc.Format)
 	if format == "" {
@@ -113,4 +110,33 @@ func compileDocManifest(routerGroup string, index int, doc DocManifest) (Compile
 		Summary:     strings.TrimSpace(doc.Summary),
 		Policy:      policy,
 	}, nil
+}
+
+func normalizeDocManifestCode(rawCode string) (string, error) {
+	code := strings.TrimSpace(rawCode)
+	if code == "" {
+		return "", fmt.Errorf("code is required")
+	}
+	if strings.HasPrefix(code, "/") {
+		return "", fmt.Errorf("code %q must be relative to the package", rawCode)
+	}
+	if strings.Contains(code, `\`) {
+		return "", fmt.Errorf("code %q must use forward slashes", rawCode)
+	}
+
+	code = strings.TrimPrefix(code, "./")
+	parts := strings.Split(code, "/")
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("code %q contains an invalid path segment", rawCode)
+		}
+	}
+
+	last := len(parts) - 1
+	parts[last] = strings.TrimSuffix(parts[last], ".docs")
+	if parts[last] == "" {
+		return "", fmt.Errorf("code %q is missing a document name", rawCode)
+	}
+	parts[last] += ".docs"
+	return strings.Join(parts, "/"), nil
 }

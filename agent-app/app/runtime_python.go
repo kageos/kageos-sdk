@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/kageos/kageos-sdk/agent-app/response"
 	pythonRuntime "github.com/kageos/kageos-sdk/agent-app/runtime/python"
+	appTypes "github.com/kageos/kageos-sdk/agent-app/types"
 	"github.com/kageos/kageos-sdk/dto"
 	"github.com/kageos/kageos-sdk/pkg/logger"
 )
@@ -161,7 +163,19 @@ func runtimeBuildPythonResponse(ctx *Context, req runtimePythonReq, execResult *
 					outputStr = "输出文件错误: " + pathErr.Error()
 				}
 			} else if len(paths) > 0 {
-				outputFiles = ctx.GetFS().ResponseFiles(paths)
+				responseFiles, nameErr := runtimePythonResponseFiles(paths, execResult.OutputFiles)
+				if nameErr != nil {
+					logger.Errorf(ctx, "[RuntimePython] 校验 output_files.name 失败: %v", nameErr)
+					status = "失败"
+					outputStr = appendRuntimeOutputFileError(outputStr, nameErr.Error())
+				} else {
+					outputFiles = ctx.GetFS().ResponseFilesWithNames(responseFiles)
+					if uploadErr := runtimeValidateUploadedFileCount(outputFiles, len(responseFiles)); uploadErr != nil {
+						logger.Errorf(ctx, "[RuntimePython] 上传 output_files 不完整: %v", uploadErr)
+						status = "失败"
+						outputStr = appendRuntimeOutputFileError(outputStr, uploadErr.Error())
+					}
+				}
 			}
 		}
 	}
@@ -179,6 +193,45 @@ func runtimeBuildPythonResponse(ctx *Context, req runtimePythonReq, execResult *
 		JSONResult:  jsonResult,
 		OutputFiles: outputFiles,
 	}
+}
+
+func runtimePythonResponseFiles(paths []string, artifacts []pythonRuntime.PythonArtifact) ([]ResponseFile, error) {
+	files := make([]ResponseFile, 0, len(paths))
+	for i, filePath := range paths {
+		name := ""
+		if i < len(artifacts) {
+			rawName := strings.TrimSpace(artifacts[i].Name)
+			if rawName != "" {
+				name = normalizeResponseFileName(rawName)
+				if name == "" {
+					return nil, fmt.Errorf("python output_files[%d].name 不是有效文件名", i)
+				}
+				pathExt := strings.ToLower(filepath.Ext(filePath))
+				nameExt := strings.ToLower(filepath.Ext(name))
+				if pathExt != nameExt {
+					return nil, fmt.Errorf("python output_files[%d].name 扩展名必须与 path 一致: path=%s, name=%s", i, filepath.Base(filePath), name)
+				}
+			}
+		}
+		files = append(files, ResponseFile{Path: filePath, Name: name})
+	}
+	return files, nil
+}
+
+func runtimeValidateUploadedFileCount(outputFiles string, expected int) error {
+	actual := len(appTypes.ParseFileRefs(outputFiles))
+	if actual != expected {
+		return fmt.Errorf("输出文件上传不完整：应上传 %d 个，实际成功 %d 个", expected, actual)
+	}
+	return nil
+}
+
+func appendRuntimeOutputFileError(output, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if strings.TrimSpace(output) == "" {
+		return "输出文件错误: " + detail
+	}
+	return output + "\n\n输出文件错误:\n" + detail
 }
 
 func runtimePythonInputFileRefs(explicit string, args map[string]interface{}) string {

@@ -6,7 +6,9 @@ import (
 	"io"
 	"mime"
 	"os"
+	pathpkg "path"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/kageos/kageos-sdk/agent-app/types"
@@ -16,7 +18,10 @@ import (
 	"github.com/kageos/kageos-sdk/pkg/storage"
 )
 
-const maxUploadBatchSize = 100
+const (
+	maxUploadBatchSize            = 100
+	maxResponseFileNameCharacters = 255
+)
 
 type fileUploadResult struct {
 	fileInfo *FileInfo
@@ -36,12 +41,20 @@ func calculateSHA256(reader io.Reader) (string, error) {
 
 // batchUploadFiles 批量上传文件（核心实现）
 func (c *Context) batchUploadFiles(filePaths []string) string {
-	if len(filePaths) == 0 {
+	files := make([]ResponseFile, 0, len(filePaths))
+	for _, filePath := range filePaths {
+		files = append(files, ResponseFile{Path: filePath})
+	}
+	return c.batchUploadResponseFiles(files)
+}
+
+func (c *Context) batchUploadResponseFiles(files []ResponseFile) string {
+	if len(files) == 0 {
 		return ""
 	}
 
-	filePaths = c.limitUploadFilePaths(filePaths)
-	fileInfos, err := c.collectFileInfos(filePaths)
+	files = c.limitUploadResponseFiles(files)
+	fileInfos, err := c.collectResponseFileInfos(files)
 	if err != nil {
 		logger.Errorf(c, "[batchUploadFiles] Failed to collect file infos: %v", err)
 		return ""
@@ -67,12 +80,12 @@ func (c *Context) batchUploadFiles(filePaths []string) string {
 	return types.JoinFileRefs(successRefs)
 }
 
-func (c *Context) limitUploadFilePaths(filePaths []string) []string {
-	if len(filePaths) <= maxUploadBatchSize {
-		return filePaths
+func (c *Context) limitUploadResponseFiles(files []ResponseFile) []ResponseFile {
+	if len(files) <= maxUploadBatchSize {
+		return files
 	}
-	logger.Warnf(c, "[batchUploadFiles] 文件数量超过限制 (%d > %d)，只处理前 %d 个", len(filePaths), maxUploadBatchSize, maxUploadBatchSize)
-	return filePaths[:maxUploadBatchSize]
+	logger.Warnf(c, "[batchUploadFiles] 文件数量超过限制 (%d > %d)，只处理前 %d 个", len(files), maxUploadBatchSize, maxUploadBatchSize)
+	return files[:maxUploadBatchSize]
 }
 
 func (c *Context) fetchBatchUploadTokens(fileInfos []*FileInfo) (*dto.BatchGetUploadTokenResp, error) {
@@ -81,16 +94,18 @@ func (c *Context) fetchBatchUploadTokens(fileInfos []*FileInfo) (*dto.BatchGetUp
 
 func (c *Context) buildBatchUploadTokenReq(fileInfos []*FileInfo) *dto.BatchGetUploadTokenReq {
 	batchTokenReq := &dto.BatchGetUploadTokenReq{
-		Files: make([]dto.GetUploadTokenReq, 0, len(fileInfos)),
+		Files:        make([]dto.GetUploadTokenReq, 0, len(fileInfos)),
+		UploadSource: dto.UploadSourceServer,
 	}
 
 	for _, info := range fileInfos {
 		batchTokenReq.Files = append(batchTokenReq.Files, dto.GetUploadTokenReq{
-			Router:      c.msg.GetFullRouter(),
-			FileName:    info.FileName,
-			ContentType: info.ContentType,
-			FileSize:    info.FileSize,
-			Hash:        info.Hash,
+			Router:       c.msg.GetFullRouter(),
+			FileName:     info.FileName,
+			ContentType:  info.ContentType,
+			FileSize:     info.FileSize,
+			Hash:         info.Hash,
+			UploadSource: dto.UploadSourceServer,
 		})
 	}
 	return batchTokenReq
@@ -255,27 +270,33 @@ func closeFileInfos(fileInfos []*FileInfo) {
 	}
 }
 
-// collectFileInfos 收集文件信息（并行计算hash）
-func (c *Context) collectFileInfos(filePaths []string) ([]*FileInfo, error) {
+// collectResponseFileInfos 收集文件信息（并行计算hash），并应用可选展示文件名。
+func (c *Context) collectResponseFileInfos(files []ResponseFile) ([]*FileInfo, error) {
 	type fileInfoResult struct {
 		info *FileInfo
 		err  error
 	}
 
-	results := make([]fileInfoResult, len(filePaths))
+	results := make([]fileInfoResult, len(files))
 	var wg sync.WaitGroup
 
-	for i, path := range filePaths {
+	for i, responseFile := range files {
 		wg.Add(1)
-		go func(idx int, filePath string) {
+		go func(idx int, item ResponseFile) {
 			defer wg.Done()
 
-			info, err := c.collectSingleFileInfo(filePath)
+			info, err := c.collectSingleFileInfo(item.Path)
+			if err == nil && info != nil {
+				if displayName := normalizeResponseFileName(item.Name); displayName != "" {
+					info.FileName = displayName
+					info.ContentType = contentTypeForFileName(displayName)
+				}
+			}
 			results[idx] = fileInfoResult{
 				info: info,
 				err:  err,
 			}
-		}(i, path)
+		}(i, responseFile)
 	}
 
 	wg.Wait()
@@ -283,8 +304,8 @@ func (c *Context) collectFileInfos(filePaths []string) ([]*FileInfo, error) {
 	fileInfos := make([]*FileInfo, 0, len(results))
 	for i, result := range results {
 		if result.err != nil {
-			if i < len(filePaths) {
-				logger.Errorf(c, "[collectFileInfos] Failed to collect file info for %s: %v", filePaths[i], result.err)
+			if i < len(files) {
+				logger.Errorf(c, "[collectFileInfos] Failed to collect file info for %s: %v", files[i].Path, result.err)
 			} else {
 				logger.Errorf(c, "[collectFileInfos] Failed to collect file info: %v", result.err)
 			}
@@ -313,10 +334,7 @@ func (c *Context) collectSingleFileInfo(filePath string) (*FileInfo, error) {
 
 	fileName := fileInfo.Name()
 	fileSize := fileInfo.Size()
-	contentType := mime.TypeByExtension(filepath.Ext(fileName))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	contentType := contentTypeForFileName(fileName)
 
 	hash, err := calculateSHA256(file)
 	if err != nil {
@@ -332,4 +350,66 @@ func (c *Context) collectSingleFileInfo(filePath string) (*FileInfo, error) {
 		Hash:        hash,
 		File:        file,
 	}, nil
+}
+
+func normalizeResponseFileName(name string) string {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
+	if name == "" {
+		return ""
+	}
+	name = pathpkg.Base(name)
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(`<>:"|?*`, r) {
+			return '_'
+		}
+		return r
+	}, name)
+	name = strings.TrimRight(strings.TrimSpace(name), ". ")
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return ""
+	}
+	if isReservedResponseFileName(name) {
+		name = "_" + name
+	}
+	return truncateResponseFileName(name, maxResponseFileNameCharacters)
+}
+
+func isReservedResponseFileName(name string) bool {
+	base := strings.ToUpper(strings.TrimSuffix(name, filepath.Ext(name)))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) {
+		return base[3] >= '1' && base[3] <= '9'
+	}
+	return false
+}
+
+func truncateResponseFileName(name string, maxCharacters int) string {
+	nameRunes := []rune(name)
+	if maxCharacters <= 0 || len(nameRunes) <= maxCharacters {
+		return name
+	}
+
+	ext := filepath.Ext(name)
+	extRunes := []rune(ext)
+	if ext == "" || len(extRunes) >= maxCharacters {
+		return string(nameRunes[:maxCharacters])
+	}
+
+	stemRunes := []rune(strings.TrimSuffix(name, ext))
+	stemLimit := maxCharacters - len(extRunes)
+	if len(stemRunes) > stemLimit {
+		stemRunes = stemRunes[:stemLimit]
+	}
+	return string(stemRunes) + ext
+}
+
+func contentTypeForFileName(fileName string) string {
+	contentType := mime.TypeByExtension(filepath.Ext(fileName))
+	if contentType == "" {
+		return "application/octet-stream"
+	}
+	return contentType
 }
