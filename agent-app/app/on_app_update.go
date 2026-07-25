@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kageos/kageos-sdk/agent-app/callback"
@@ -395,6 +398,7 @@ func (a *App) buildApiInfo(info *routerInfo) (*ApiInfo, []interface{}, error) {
 // 每次 update 都会调用，返回的全量列表供 app-server 做目录对账
 func (a *App) collectPackageInfos() ([]*PackageInfo, error) {
 	seen := make(map[string]*PackageInfo)
+	compiledDocs := make(map[string][]CompiledDocManifest)
 
 	addPackagePath := func(pkgPath string) {
 		pkgPath = strings.Trim(pkgPath, "/")
@@ -427,8 +431,23 @@ func (a *App) collectPackageInfos() ([]*PackageInfo, error) {
 		addPackagePath(info.Options.PackagePath)
 	}
 
-	for pkgPath := range a.packageContexts {
+	for pkgPath, packageContext := range a.packageContexts {
 		addPackagePath(pkgPath)
+		if packageContext == nil {
+			continue
+		}
+
+		docs, err := compileDocManifests("/"+strings.Trim(pkgPath, "/"), packageContext.Docs)
+		if err != nil {
+			return nil, err
+		}
+		compiledDocs[pkgPath] = docs
+		for _, doc := range docs {
+			parentPath := path.Dir(doc.Code)
+			if parentPath != "." {
+				addPackagePath(strings.Trim(pkgPath, "/") + "/" + parentPath)
+			}
+		}
 	}
 
 	for subPath, info := range seen {
@@ -447,11 +466,7 @@ func (a *App) collectPackageInfos() ([]*PackageInfo, error) {
 			return nil, err
 		}
 		info.AgentTasks = tasks
-		docs, err := compileDocManifests(info.RouterGroup, pc.Docs)
-		if err != nil {
-			return nil, err
-		}
-		info.Docs = docs
+		info.Docs = compiledDocs[subPath]
 	}
 
 	result := make([]*PackageInfo, 0, len(seen))
@@ -501,7 +516,16 @@ func (a *App) onAppUpdate(msg *nats.Msg) {
 	logger.Infof(ctx, "[onAppUpdate] ✅ All done! Response sent successfully")
 }
 
-func (a *App) executeOnAppUpdate(ctx context.Context, msg *nats.Msg, dbCapability *dto.AppDBCapability) error {
+func (a *App) executeOnAppUpdate(ctx context.Context, msg *nats.Msg, dbCapability *dto.AppDBCapability) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		if err != nil {
+			logger.Errorf(ctx, "[onAppUpdate][timing] phase=total status=error duration_ms=%d error=%v", time.Since(startedAt).Milliseconds(), err)
+			return
+		}
+		logger.Infof(ctx, "[onAppUpdate][timing] phase=total status=ok duration_ms=%d", time.Since(startedAt).Milliseconds())
+	}()
+
 	currentApis, err := a.loadCurrentApisForUpdate(ctx)
 	if err != nil {
 		return err
@@ -528,76 +552,266 @@ func (a *App) executeOnAppUpdate(ctx context.Context, msg *nats.Msg, dbCapabilit
 }
 
 func (a *App) loadCurrentApisForUpdate(ctx context.Context) ([]*ApiInfo, error) {
+	startedAt := time.Now()
 	logger.Infof(ctx, "[onAppUpdate] Step 1: Getting current APIs...")
 	currentApis, _, err := a.getApis()
 	if err != nil {
-		logger.Errorf(ctx, "[onAppUpdate] Step 1 FAILED: %v", err)
+		logger.Errorf(ctx, "[onAppUpdate] Step 1 FAILED: duration_ms=%d error=%v", time.Since(startedAt).Milliseconds(), err)
 		return nil, fmt.Errorf("Failed to get current APIs: %v", err)
 	}
-	logger.Infof(ctx, "[onAppUpdate] Step 1 OK: got %d APIs", len(currentApis))
+	logger.Infof(ctx, "[onAppUpdate] Step 1 OK: got %d APIs duration_ms=%d", len(currentApis), time.Since(startedAt).Milliseconds())
 	return currentApis, nil
 }
 
 func (a *App) migrateUpdateDatabases(ctx context.Context, currentApis []*ApiInfo, dbCapability *dto.AppDBCapability) error {
-	logger.Infof(ctx, "[onAppUpdate] Step 2: Initializing databases...")
-	for i, api := range currentApis {
-		if err := a.migrateUpdateDatabaseForAPI(ctx, i, api, dbCapability); err != nil {
-			return err
-		}
+	startedAt := time.Now()
+	// Always reconcile the models declared by CreateTables against the real
+	// database on every update. A source/workplace fingerprint alone cannot
+	// prove that the database was not recreated, switched, or changed outside
+	// this process, so it must never be used to skip this reconciliation.
+	prepareStartedAt := time.Now()
+	groups := groupUpdateDatabaseAPIs(ctx, currentApis)
+	groups = prepareUpdateDatabaseMigrationGroups(groups)
+	modelCount := 0
+	for _, group := range groups {
+		modelCount += len(group.models)
 	}
-	logger.Infof(ctx, "[onAppUpdate] Step 2 OK: databases initialized")
+	prepareDuration := time.Since(prepareStartedAt)
+	logger.Infof(
+		ctx,
+		"[onAppUpdate] Step 2: Initializing databases for %d packages and %d unique models (deduplicated by CreateTables model, concurrency=%d, prepare_ms=%d)...",
+		len(groups),
+		modelCount,
+		updateDatabaseMigrationConcurrency,
+		prepareDuration.Milliseconds(),
+	)
+	err := runUpdateDatabaseMigrationGroups(groups, updateDatabaseMigrationConcurrency, func(group updateDatabaseMigrationGroup) error {
+		return a.migrateUpdateDatabaseGroup(ctx, group, dbCapability)
+	})
+	if err != nil {
+		logger.Errorf(ctx, "[onAppUpdate][timing] phase=database_migration status=error packages=%d unique_models=%d duration_ms=%d error=%v",
+			len(groups), modelCount, time.Since(startedAt).Milliseconds(), err)
+		return err
+	}
+	logger.Infof(ctx, "[onAppUpdate] Step 2 OK: databases initialized packages=%d unique_models=%d duration_ms=%d",
+		len(groups), modelCount, time.Since(startedAt).Milliseconds())
 	return nil
 }
 
-func (a *App) migrateUpdateDatabaseForAPI(ctx context.Context, index int, api *ApiInfo, dbCapability *dto.AppDBCapability) error {
-	if api.routerInfo.Options == nil {
-		logger.Debugf(ctx, "[onAppUpdate] Step 2: API %d (%s) has no options, skipping DB init", index, api.Name)
-		return nil
-	}
+const updateDatabaseMigrationConcurrency = 6
 
-	packagePath := strings.Trim(api.routerInfo.Options.PackagePath, "/")
-	logger.Debugf(ctx, "[onAppUpdate] Step 2: API %d (%s) opening MySQL app DB for package: %s", index, api.Name, packagePath)
-	db, err := getOrInitMySQLMigrationDB(packagePath, dbCapability)
+type updateDatabaseMigrationAPI struct {
+	index int
+	api   *ApiInfo
+}
+
+type updateDatabaseMigrationGroup struct {
+	packagePath string
+	apis        []updateDatabaseMigrationAPI
+	models      []interface{}
+}
+
+func groupUpdateDatabaseAPIs(ctx context.Context, currentApis []*ApiInfo) []updateDatabaseMigrationGroup {
+	groupIndexes := make(map[string]int)
+	groups := make([]updateDatabaseMigrationGroup, 0)
+	for index, api := range currentApis {
+		if api == nil || api.routerInfo == nil || api.routerInfo.Options == nil {
+			name := ""
+			if api != nil {
+				name = api.Name
+			}
+			logger.Debugf(ctx, "[onAppUpdate] Step 2: API %d (%s) has no options, skipping DB init", index, name)
+			continue
+		}
+		if len(api.CreateTableModels) == 0 {
+			continue
+		}
+
+		packagePath := strings.Trim(api.routerInfo.Options.PackagePath, "/")
+		groupIndex, ok := groupIndexes[packagePath]
+		if !ok {
+			groupIndex = len(groups)
+			groupIndexes[packagePath] = groupIndex
+			groups = append(groups, updateDatabaseMigrationGroup{packagePath: packagePath})
+		}
+		groups[groupIndex].apis = append(groups[groupIndex].apis, updateDatabaseMigrationAPI{index: index, api: api})
+	}
+	return groups
+}
+
+func prepareUpdateDatabaseMigrationGroups(groups []updateDatabaseMigrationGroup) []updateDatabaseMigrationGroup {
+	prepared := make([]updateDatabaseMigrationGroup, 0, len(groups))
+	for _, group := range groups {
+		models := uniqueUpdateDatabaseMigrationModels(group)
+		if len(models) == 0 {
+			continue
+		}
+		group.models = models
+		prepared = append(prepared, group)
+	}
+	// Start packages with more models first. This shortens the worker-pool tail
+	// without skipping or reordering models inside a package.
+	sort.SliceStable(prepared, func(i, j int) bool {
+		if len(prepared[i].models) == len(prepared[j].models) {
+			return prepared[i].packagePath < prepared[j].packagePath
+		}
+		return len(prepared[i].models) > len(prepared[j].models)
+	})
+	return prepared
+}
+
+func uniqueUpdateDatabaseMigrationModels(group updateDatabaseMigrationGroup) []interface{} {
+	// GORM derives AutoMigrate metadata from the Go model type. Keep every
+	// distinct type (even when two types map to the same table), and collapse
+	// only exact repeats caused by multiple APIs declaring the same model in
+	// CreateTables.
+	seenTypes := make(map[reflect.Type]struct{})
+	models := make([]interface{}, 0)
+
+	for _, item := range group.apis {
+		if item.api == nil {
+			continue
+		}
+		for _, model := range item.api.CreateTableModels {
+			if model == nil {
+				continue
+			}
+			modelType := reflect.TypeOf(model)
+			if _, exists := seenTypes[modelType]; exists {
+				continue
+			}
+
+			seenTypes[modelType] = struct{}{}
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
+func (a *App) migrateUpdateDatabaseGroup(ctx context.Context, group updateDatabaseMigrationGroup, dbCapability *dto.AppDBCapability) error {
+	startedAt := time.Now()
+	logger.Debugf(ctx, "[onAppUpdate] Step 2: opening MySQL app DB for package: %s (apis=%d, unique_models=%d)", group.packagePath, len(group.apis), len(group.models))
+	dbStartedAt := time.Now()
+	db, err := getOrInitMySQLMigrationDB(group.packagePath, dbCapability)
+	dbDuration := time.Since(dbStartedAt)
 	if err != nil {
-		logger.Errorf(ctx, "[onAppUpdate] Step 2 FAILED: get MySQL app DB for package=%s: %v", packagePath, err)
+		logger.Errorf(ctx, "[onAppUpdate] Step 2 FAILED: get MySQL app DB for package=%s duration_ms=%d error=%v", group.packagePath, dbDuration.Milliseconds(), err)
 		return fmt.Errorf("Failed to get DB: %v", err)
 	}
 
-	for _, createTable := range api.CreateTableModels {
-		if err := db.AutoMigrate(createTable); err != nil {
-			logger.Errorf(ctx, "[onAppUpdate] Step 2 FAILED: AutoMigrate: %v", err)
+	migrateStartedAt := time.Now()
+	for _, model := range group.models {
+		modelStartedAt := time.Now()
+		if err := db.AutoMigrate(model); err != nil {
+			logger.Errorf(ctx, "[onAppUpdate] Step 2 FAILED: AutoMigrate package=%s model=%T duration_ms=%d error=%v",
+				group.packagePath, model, time.Since(modelStartedAt).Milliseconds(), err)
 			return fmt.Errorf("Failed to migrate table: %v", err)
 		}
+		modelDuration := time.Since(modelStartedAt)
+		if modelDuration >= time.Second {
+			logger.Warnf(ctx, "[onAppUpdate][timing] phase=auto_migrate package=%s model=%T duration_ms=%d",
+				group.packagePath, model, modelDuration.Milliseconds())
+		} else {
+			logger.Debugf(ctx, "[onAppUpdate][timing] phase=auto_migrate package=%s model=%T duration_ms=%d",
+				group.packagePath, model, modelDuration.Milliseconds())
+		}
 	}
+	migrateDuration := time.Since(migrateStartedAt)
+	logger.Infof(ctx,
+		"[onAppUpdate][timing] phase=database_package status=ok package=%s apis=%d unique_models=%d db_open_ms=%d migrate_ms=%d duration_ms=%d",
+		group.packagePath,
+		len(group.apis),
+		len(group.models),
+		dbDuration.Milliseconds(),
+		migrateDuration.Milliseconds(),
+		time.Since(startedAt).Milliseconds(),
+	)
 
 	return nil
 }
 
+func runUpdateDatabaseMigrationGroups(
+	groups []updateDatabaseMigrationGroup,
+	concurrency int,
+	migrate func(updateDatabaseMigrationGroup) error,
+) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > len(groups) {
+		concurrency = len(groups)
+	}
+
+	var (
+		workers  sync.WaitGroup
+		mu       sync.Mutex
+		next     int
+		firstErr error
+	)
+	workers.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer workers.Done()
+			for {
+				mu.Lock()
+				if firstErr != nil || next >= len(groups) {
+					mu.Unlock()
+					return
+				}
+				group := groups[next]
+				next++
+				mu.Unlock()
+
+				if err := migrate(group); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	return firstErr
+}
+
 func (a *App) persistCurrentUpdateVersion(ctx context.Context, currentApis []*ApiInfo) error {
+	startedAt := time.Now()
 	logger.Infof(ctx, "[onAppUpdate] Step 3: Saving current version...")
 	if err := a.saveCurrentVersion(currentApis); err != nil {
-		logger.Errorf(ctx, "[onAppUpdate] Step 3 FAILED: %v", err)
+		logger.Errorf(ctx, "[onAppUpdate] Step 3 FAILED: duration_ms=%d error=%v", time.Since(startedAt).Milliseconds(), err)
 		return fmt.Errorf("Failed to save current version: %v", err)
 	}
-	logger.Infof(ctx, "[onAppUpdate] Step 3 OK: version saved")
+	logger.Infof(ctx, "[onAppUpdate] Step 3 OK: version saved duration_ms=%d", time.Since(startedAt).Milliseconds())
 	return nil
 }
 
 func (a *App) buildUpdateDiffData(ctx context.Context, currentApis []*ApiInfo) (*DiffData, error) {
+	startedAt := time.Now()
 	logger.Infof(ctx, "[onAppUpdate] Step 4: Diffing APIs...")
+	diffStartedAt := time.Now()
 	add, update, del, err := a.diffApiWithCurrentApis(currentApis)
+	diffDuration := time.Since(diffStartedAt)
 	if err != nil {
-		logger.Errorf(ctx, "[onAppUpdate] Step 4 FAILED: %v", err)
+		logger.Errorf(ctx, "[onAppUpdate] Step 4 FAILED: duration_ms=%d error=%v", diffDuration.Milliseconds(), err)
 		return nil, fmt.Errorf("Failed to diff APIs: %v", err)
 	}
-	logger.Infof(ctx, "[onAppUpdate] Step 4 OK: add=%d, update=%d, delete=%d", len(add), len(update), len(del))
+	logger.Infof(ctx, "[onAppUpdate] Step 4 OK: add=%d, update=%d, delete=%d duration_ms=%d", len(add), len(update), len(del), diffDuration.Milliseconds())
 
+	packageStartedAt := time.Now()
 	packages, err := a.collectPackageInfos()
+	packageDuration := time.Since(packageStartedAt)
 	if err != nil {
-		logger.Errorf(ctx, "[onAppUpdate] Step 5 FAILED: %v", err)
+		logger.Errorf(ctx, "[onAppUpdate] Step 5 FAILED: duration_ms=%d error=%v", packageDuration.Milliseconds(), err)
 		return nil, fmt.Errorf("Failed to collect packages: %v", err)
 	}
-	logger.Infof(ctx, "[onAppUpdate] Step 5: collected %d packages for reconciliation", len(packages))
+	logger.Infof(ctx, "[onAppUpdate] Step 5: collected %d packages for reconciliation duration_ms=%d total_diff_build_ms=%d",
+		len(packages), packageDuration.Milliseconds(), time.Since(startedAt).Milliseconds())
 
 	return &DiffData{
 		Add:      add,
@@ -608,13 +822,16 @@ func (a *App) buildUpdateDiffData(ctx context.Context, currentApis []*ApiInfo) (
 }
 
 func (a *App) runOnAPICreateCallbacks(ctx context.Context, addedApis []*ApiInfo, dbCapability *dto.AppDBCapability) error {
+	startedAt := time.Now()
 	logger.Infof(ctx, "[onAppUpdate] Step 5: Running OnApiCreate callbacks...")
 	for _, aa := range addedApis {
 		if err := a.runOnAPICreateCallback(ctx, aa, dbCapability); err != nil {
+			logger.Errorf(ctx, "[onAppUpdate][timing] phase=on_api_create status=error api_count=%d duration_ms=%d error=%v",
+				len(addedApis), time.Since(startedAt).Milliseconds(), err)
 			return err
 		}
 	}
-	logger.Infof(ctx, "[onAppUpdate] Step 5 OK: callbacks done")
+	logger.Infof(ctx, "[onAppUpdate] Step 5 OK: callbacks done api_count=%d duration_ms=%d", len(addedApis), time.Since(startedAt).Milliseconds())
 	return nil
 }
 
@@ -661,11 +878,13 @@ func appDBCapabilityFromControlMessage(msg *nats.Msg) *dto.AppDBCapability {
 }
 
 func (a *App) respondUpdateSuccess(ctx context.Context, msg *nats.Msg, diffData *DiffData) error {
+	startedAt := time.Now()
 	logger.Infof(ctx, "[onAppUpdate] Step 6: Sending success response...")
 	if err := a.transport.RespondUpdateSuccess(msg, diffData); err != nil {
-		logger.Errorf(ctx, "[onAppUpdate] Step 6 FAILED: %v", err)
+		logger.Errorf(ctx, "[onAppUpdate] Step 6 FAILED: duration_ms=%d error=%v", time.Since(startedAt).Milliseconds(), err)
 		return err
 	}
+	logger.Infof(ctx, "[onAppUpdate] Step 6 OK: response sent duration_ms=%d", time.Since(startedAt).Milliseconds())
 	return nil
 }
 

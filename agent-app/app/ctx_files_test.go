@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -151,12 +153,18 @@ func TestBuildBatchUploadTokenReq(t *testing.T) {
 		Hash:        "sha256",
 	}})
 
+	if req.UploadSource != dto.UploadSourceServer {
+		t.Fatalf("expected server upload source, got %s", req.UploadSource)
+	}
 	if len(req.Files) != 1 {
 		t.Fatalf("expected one file request, got %d", len(req.Files))
 	}
 	fileReq := req.Files[0]
 	if fileReq.Router != "/alice/demo/tools/export" {
 		t.Fatalf("unexpected router: %s", fileReq.Router)
+	}
+	if fileReq.UploadSource != dto.UploadSourceServer {
+		t.Fatalf("expected file server upload source, got %s", fileReq.UploadSource)
 	}
 	if fileReq.FileName != "report.csv" || fileReq.FileSize != 42 || fileReq.ContentType != "text/csv" || fileReq.Hash != "sha256" {
 		t.Fatalf("unexpected file request: %#v", fileReq)
@@ -206,5 +214,56 @@ func TestAppendCompletedUploadRefs(t *testing.T) {
 
 	if len(got) != 1 || got[0] != "bucket/from-api" {
 		t.Fatalf("unexpected completed refs: %#v", got)
+	}
+}
+
+func TestCollectResponseFileInfosUsesDeclaredName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "generated-12345.bin")
+	if err := os.WriteFile(path, []byte("xlsx payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &Context{}
+	infos, err := ctx.collectResponseFileInfos([]ResponseFile{{
+		Path: path,
+		Name: "商品导入模板_已填充.xlsx",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFileInfos(infos)
+	if len(infos) != 1 {
+		t.Fatalf("expected one file info, got %d", len(infos))
+	}
+	if infos[0].FileName != "商品导入模板_已填充.xlsx" {
+		t.Fatalf("unexpected display name: %q", infos[0].FileName)
+	}
+	if infos[0].ContentType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+		t.Fatalf("unexpected content type: %q", infos[0].ContentType)
+	}
+}
+
+func TestNormalizeResponseFileNameRemovesPath(t *testing.T) {
+	if got := normalizeResponseFileName(`exports\\商品导入模板.xlsx`); got != "商品导入模板.xlsx" {
+		t.Fatalf("unexpected normalized name: %q", got)
+	}
+}
+
+func TestNormalizeResponseFileNameSanitizesUnsafeCharacters(t *testing.T) {
+	if got := normalizeResponseFileName("  报告：第一版?\n.xlsx.  "); got != "报告：第一版__.xlsx" {
+		t.Fatalf("unexpected sanitized name: %q", got)
+	}
+	if got := normalizeResponseFileName("CON.xlsx"); got != "_CON.xlsx" {
+		t.Fatalf("expected reserved name to be prefixed, got %q", got)
+	}
+}
+
+func TestNormalizeResponseFileNameTruncatesAndPreservesExtension(t *testing.T) {
+	got := normalizeResponseFileName(strings.Repeat("商", 300) + ".xlsx")
+	if len([]rune(got)) != maxResponseFileNameCharacters {
+		t.Fatalf("expected %d characters, got %d", maxResponseFileNameCharacters, len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, ".xlsx") {
+		t.Fatalf("expected extension to be preserved, got %q", got)
 	}
 }

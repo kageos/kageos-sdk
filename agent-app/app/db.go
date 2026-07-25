@@ -24,6 +24,7 @@ import (
 var (
 	dbLock             = new(sync.Mutex)
 	dbs                = make(map[string]*dbCacheEntry)
+	dbInitLocks        [32]sync.Mutex
 	dbCleanupOnce      sync.Once
 	mysqlEndpointCache sync.Map
 )
@@ -81,6 +82,7 @@ func getOrInitMySQLMigrationDB(packagePath string, capability *dto.AppDBCapabili
 }
 
 func getOrInitMySQLDBForAccess(packagePath string, capability *dto.AppDBCapability, access string) (*gorm.DB, error) {
+	initStartedAt := time.Now()
 	packagePath = strings.Trim(packagePath, "/")
 	if packagePath == "" {
 		packagePath = appDBRootPackagePath
@@ -92,40 +94,100 @@ func getOrInitMySQLDBForAccess(packagePath string, capability *dto.AppDBCapabili
 		return nil, errors.New("runtime MySQL app database capability is unavailable")
 	}
 
-	dbLock.Lock()
-	defer dbLock.Unlock()
 	dbCleanupOnce.Do(startDBCleanupLoop)
 
 	cacheKey := "mysql:" + access + ":" + packagePath
-	if entry, ok := dbs[cacheKey]; ok && entry != nil {
-		entry.lastUsed = time.Now()
-		return entry.db, nil
+	if db := cachedMySQLDB(cacheKey); db != nil {
+		return db, nil
 	}
 
+	// Only serialize initialization for the same (or hash-colliding) package.
+	// Holding the global cache lock across NATS resolution and gorm.Open made
+	// unrelated package migrations run one by one during onAppUpdate.
+	initLock := dbInitLockFor(cacheKey)
+	initLock.Lock()
+	defer initLock.Unlock()
+	if db := cachedMySQLDB(cacheKey); db != nil {
+		return db, nil
+	}
+
+	resolveStartedAt := time.Now()
 	resp, err := resolveRuntimeAppDatabase(packagePath, capability, access)
+	resolveDuration := time.Since(resolveStartedAt)
 	if err != nil {
+		logger.Errorf(context.Background(), "[appDB][timing] phase=resolve status=error package=%s access=%s duration_ms=%d error=%v",
+			packagePath, access, resolveDuration.Milliseconds(), err)
 		return nil, err
 	}
 	if !strings.EqualFold(resp.Dialect, "mysql") {
 		return nil, fmt.Errorf("unsupported runtime app database dialect: %s", resp.Dialect)
 	}
 
+	endpointStartedAt := time.Now()
 	dsn, err := resolveMySQLDSNEndpoint(resp.DSN)
+	endpointDuration := time.Since(endpointStartedAt)
 	if err != nil {
+		logger.Errorf(context.Background(), "[appDB][timing] phase=resolve_endpoint status=error package=%s access=%s duration_ms=%d error=%v",
+			packagePath, access, endpointDuration.Milliseconds(), err)
 		return nil, err
 	}
+	openStartedAt := time.Now()
 	db, err := gorm.Open(gormmysql.Open(dsn), runtimeAppGORMConfig())
+	openDuration := time.Since(openStartedAt)
 	if err != nil {
-		logger.Errorf(context.Background(), "打开 MySQL 应用数据库失败 package=%s db=%s: %v", packagePath, resp.DatabaseName, err)
+		logger.Errorf(context.Background(), "打开 MySQL 应用数据库失败 package=%s db=%s duration_ms=%d error=%v", packagePath, resp.DatabaseName, openDuration.Milliseconds(), err)
 		return nil, err
 	}
+	poolStartedAt := time.Now()
 	if err := configureMySQLConnectionPool(db, resp); err != nil {
+		logger.Errorf(context.Background(), "[appDB][timing] phase=configure_pool status=error package=%s access=%s duration_ms=%d error=%v",
+			packagePath, access, time.Since(poolStartedAt).Milliseconds(), err)
 		return nil, err
 	}
+	poolDuration := time.Since(poolStartedAt)
 
+	dbLock.Lock()
 	dbs[cacheKey] = &dbCacheEntry{db: db, dialect: "mysql", lastUsed: time.Now()}
-	logger.Infof(context.Background(), "MySQL 应用数据库连接已创建: package=%s access=%s db=%s", packagePath, resp.Access, resp.DatabaseName)
+	dbLock.Unlock()
+	logger.Infof(
+		context.Background(),
+		"[appDB][timing] phase=initialize status=ok package=%s access=%s db=%s resolve_ms=%d endpoint_ms=%d open_ms=%d pool_ms=%d duration_ms=%d",
+		packagePath,
+		resp.Access,
+		resp.DatabaseName,
+		resolveDuration.Milliseconds(),
+		endpointDuration.Milliseconds(),
+		openDuration.Milliseconds(),
+		poolDuration.Milliseconds(),
+		time.Since(initStartedAt).Milliseconds(),
+	)
 	return db, nil
+}
+
+func cachedMySQLDB(cacheKey string) *gorm.DB {
+	dbLock.Lock()
+	defer dbLock.Unlock()
+	entry := dbs[cacheKey]
+	if entry == nil || entry.db == nil {
+		return nil
+	}
+	entry.lastUsed = time.Now()
+	return entry.db
+}
+
+func dbInitLockFor(cacheKey string) *sync.Mutex {
+	// FNV-1a keeps the lock table fixed-size while allowing unrelated packages
+	// to initialize concurrently. A collision only reduces concurrency.
+	const (
+		offset32 = uint32(2166136261)
+		prime32  = uint32(16777619)
+	)
+	hash := offset32
+	for i := 0; i < len(cacheKey); i++ {
+		hash ^= uint32(cacheKey[i])
+		hash *= prime32
+	}
+	return &dbInitLocks[hash%uint32(len(dbInitLocks))]
 }
 
 func runtimeAppGORMConfig() *gorm.Config {

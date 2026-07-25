@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -127,8 +126,8 @@ func (a *ApiInfo) IsEqual(other *ApiInfo) bool {
 		!equalStrings(a.Tags, other.Tags) ||
 		!equalStrings(a.CreateTables, other.CreateTables) ||
 		!equalStrings(a.Connectors, other.Connectors) ||
-		!reflect.DeepEqual(a.ConnectorEndpoints, other.ConnectorEndpoints) ||
-		!reflect.DeepEqual(a.Schedules, other.Schedules) ||
+		!equalJSONSlices(a.ConnectorEndpoints, other.ConnectorEndpoints) ||
+		!equalJSONSlices(a.Schedules, other.Schedules) ||
 		a.TemplateType != other.TemplateType {
 		return false
 	}
@@ -147,6 +146,19 @@ func equalStrings(a1, a2 []string) bool {
 		}
 	}
 	return true
+}
+
+// equalJSONSlices treats nil and empty slices as equivalent. API snapshots use
+// omitempty, so an empty live slice is restored as nil after a JSON round trip.
+// Comparing them directly would mark every unchanged API as updated.
+func equalJSONSlices[T any](a1, a2 []T) bool {
+	if len(a1) != len(a2) {
+		return false
+	}
+	if len(a1) == 0 {
+		return true
+	}
+	return jsonx.DeepEqual(a1, a2)
 }
 
 // ApiVersion 版本化的API信息
