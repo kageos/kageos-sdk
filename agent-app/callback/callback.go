@@ -82,10 +82,13 @@ func (r *OnSelectFuzzyReq) GetValues() interface{} {
 }
 
 type SelectFuzzyItem struct {
-	Value       interface{}            `json:"value"`
-	Label       string                 `json:"label"`
-	Files       string                 `json:"files"`
-	DisplayInfo map[string]interface{} `json:"display_info"`
+	Value interface{} `json:"value"`
+	Label string      `json:"label"`
+	// RichText 是候选项的只读富文本说明。它只用于展示，不会代替 Value 提交。
+	RichText string `json:"rich_text,omitempty"`
+	// Files 是候选项的只读文件引用，协议与 files widget 一致：多个 ref 使用逗号分隔。
+	Files       string                 `json:"files,omitempty"`
+	DisplayInfo map[string]interface{} `json:"display_info,omitempty"`
 }
 
 type OnSelectFuzzyResp struct {
