@@ -45,6 +45,32 @@ func main() {
   aggregation granularity, estimate returned points, and optionally coarsen
   oversized chart responses.
 
+### Rich OnSelectFuzzy items
+
+Dynamic select and multiselect callbacks may attach read-only rich text and
+file refs to a candidate. `Value` remains the stable value submitted by the
+form; `DisplayInfo` remains short structured data for display and statistics.
+
+```go
+item := &callback.SelectFuzzyItem{
+	Value:    topic.ID,
+	Label:    topic.Title,
+	RichText: topic.Content,
+	DisplayInfo: map[string]interface{}{
+		"status": topic.Status,
+	},
+}
+
+optionItem := &callback.SelectFuzzyItem{
+	Value: option.ID,
+	Label: option.Content,
+	Files: option.Image,
+}
+```
+
+`Files` uses the same comma-separated file-ref protocol as the `files` widget.
+Do not put rich text, file refs, or composite UI payloads in `Value`.
+
 ## Local Development
 
 Run the SDK test suite:
