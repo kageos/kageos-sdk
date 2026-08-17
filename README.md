@@ -95,3 +95,9 @@ git push origin main --tags
 ```
 
 Kageos workspace apps should pin a SDK version in their own `go.mod`.
+
+## License
+
+kageos SDK is licensed under the [Apache License 2.0](LICENSE). You may use it
+in open-source and proprietary applications, including commercial kageos
+directories, apps, plugins, and integrations, subject to the license terms.
