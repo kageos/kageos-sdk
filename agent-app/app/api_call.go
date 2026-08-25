@@ -9,7 +9,7 @@ import (
 	"github.com/kageos/kageos-sdk/pkg/contextx"
 )
 
-// APICall calls an Kageos gateway API with the current request context.
+// APICall calls an kageos gateway API with the current request context.
 //
 // It is intentionally thin: SDK code passes method/path/body/response, and the
 // platform side handles auth, permission checks and auditing based on the

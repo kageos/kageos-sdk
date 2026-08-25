@@ -1,6 +1,6 @@
-# Kageos SDK
+# kageos SDK
 
-Kageos SDK is the public Go module used by Kageos workspace apps.
+kageos SDK is the public Go module used by kageos workspace apps.
 
 It contains the app runtime APIs, widget schema helpers, response builders,
 callback helpers, lightweight DTOs, and public utility packages that workspace
@@ -94,7 +94,7 @@ git tag v0.1.0
 git push origin main --tags
 ```
 
-Kageos workspace apps should pin a SDK version in their own `go.mod`.
+kageos workspace apps should pin a SDK version in their own `go.mod`.
 
 ## License
 

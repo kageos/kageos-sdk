@@ -70,7 +70,7 @@ func (c *Context) GetGormDB() *gorm.DB {
 // GetDBByPackagePath 已废弃。应用业务数据库是 MySQL-only，并且必须依赖当前请求或回调的
 // package-scoped capability；无 Context 的后台入口不能直接获取业务库连接。
 func GetDBByPackagePath(packagePath string) (*gorm.DB, error) {
-	return nil, errors.New("Kageos app business database is MySQL-only and requires request Context capability; use ctx.GetGormDB() inside handlers/callbacks")
+	return nil, errors.New("kageos app business database is MySQL-only and requires request Context capability; use ctx.GetGormDB() inside handlers/callbacks")
 }
 
 func getOrInitMySQLDB(packagePath string, capability *dto.AppDBCapability) (*gorm.DB, error) {

@@ -17,10 +17,10 @@ const (
 	// the API gateway's access-token blacklist.
 	NATSGatewayTokenCommandScope = "hr-server/gateway-token-command-nats/v1"
 
-	NATSVersionHeader   = "X-Kageos-Control-Version"
-	NATSTimestampHeader = "X-Kageos-Control-Timestamp"
-	NATSNonceHeader     = "X-Kageos-Control-Nonce"
-	NATSSignatureHeader = "X-Kageos-Control-Signature"
+	NATSVersionHeader   = "X-kageos-Control-Version"
+	NATSTimestampHeader = "X-kageos-Control-Timestamp"
+	NATSNonceHeader     = "X-kageos-Control-Nonce"
+	NATSSignatureHeader = "X-kageos-Control-Signature"
 )
 
 var natsAuthHeaders = map[string]struct{}{

@@ -36,10 +36,10 @@ const (
 	// hop for an Agent-delegated timer request.
 	HTTPGatewayTimerBackendScope = "api-gateway/timer-backend-http/v1"
 
-	HTTPVersionHeader   = "X-Kageos-Control-Version"
-	HTTPTimestampHeader = "X-Kageos-Control-Timestamp"
-	HTTPNonceHeader     = "X-Kageos-Control-Nonce"
-	HTTPSignatureHeader = "X-Kageos-Control-Signature"
+	HTTPVersionHeader   = "X-kageos-Control-Version"
+	HTTPTimestampHeader = "X-kageos-Control-Timestamp"
+	HTTPNonceHeader     = "X-kageos-Control-Nonce"
+	HTTPSignatureHeader = "X-kageos-Control-Signature"
 )
 
 var httpAuthHeaders = map[string]struct{}{
