@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kageos/kageos-sdk/agent-app/callback"
 	"github.com/kageos/kageos-sdk/agent-app/response"
 )
 
@@ -295,6 +296,40 @@ func TestTableTemplateExplicitAutoCrudTableWinsOverCreateTablesFallback(t *testi
 
 	if got := template.EffectiveAutoCrudTable(); got != template.AutoCrudTable {
 		t.Fatalf("EffectiveAutoCrudTable() = %#v, want explicit AutoCrudTable", got)
+	}
+}
+
+func TestTableExportCallbacksMustBePairedAndAreExported(t *testing.T) {
+	t.Parallel()
+
+	incomplete := newCompileTestApp("/demo/incomplete.table", &TableTemplate{
+		BaseConfig:    BaseConfig{Request: compileTestTableReq{}},
+		AutoCrudTable: &compileTestTableModel{},
+		OnTableExportPlan: func(*Context, *callback.OnTableExportPlanReq) (*callback.OnTableExportPlanResp, error) {
+			return nil, nil
+		},
+	})
+	if _, _, err := incomplete.getApis(); err == nil || !strings.Contains(err.Error(), "must register OnTableExportPlan and OnTableExportChunk together") {
+		t.Fatalf("getApis() error = %v, want paired callback validation", err)
+	}
+
+	complete := newCompileTestApp("/demo/complete.table", &TableTemplate{
+		BaseConfig:    BaseConfig{Request: compileTestTableReq{}},
+		AutoCrudTable: &compileTestTableModel{},
+		OnTableExportPlan: func(*Context, *callback.OnTableExportPlanReq) (*callback.OnTableExportPlanResp, error) {
+			return &callback.OnTableExportPlanResp{Snapshot: "snapshot", Total: 0}, nil
+		},
+		OnTableExportChunk: func(*Context, *callback.OnTableExportChunkReq) (*callback.OnTableExportChunkResp, error) {
+			return &callback.OnTableExportChunkResp{Rows: []compileTestTableModel{}}, nil
+		},
+	})
+	apis, _, err := complete.getApis()
+	if err != nil {
+		t.Fatalf("getApis() error = %v", err)
+	}
+	got := strings.Join(apis[0].Schema.Callbacks, ",")
+	if !strings.Contains(got, CallbackTypeOnTableExportPlan) || !strings.Contains(got, CallbackTypeOnTableExportChunk) {
+		t.Fatalf("callbacks = %q, want export callbacks", got)
 	}
 }
 

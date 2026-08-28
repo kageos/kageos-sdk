@@ -24,6 +24,43 @@ func (c *OnTableDeleteRowsReq) GetIds() []int {
 type OnTableDeleteRowsResp struct {
 }
 
+// TableExportBlock describes one independently exportable block in a stable
+// snapshot. Cursor is opaque to the platform and is passed back unchanged.
+type TableExportBlock struct {
+	Index    int    `json:"index"`
+	StartRow int64  `json:"start_row"`
+	EndRow   int64  `json:"end_row"`
+	RowCount int    `json:"row_count"`
+	Cursor   string `json:"cursor"`
+}
+
+// OnTableExportPlanReq asks the app to freeze export membership for the
+// current filters. Filters contain the same business search values as the
+// table list request.
+type OnTableExportPlanReq struct {
+	Filters   map[string]interface{} `json:"filters"`
+	ChunkSize int                    `json:"chunk_size"`
+}
+
+type OnTableExportPlanResp struct {
+	Snapshot string             `json:"snapshot"`
+	Total    int64              `json:"total"`
+	Blocks   []TableExportBlock `json:"blocks"`
+}
+
+// OnTableExportChunkReq reads one block from a previously created snapshot.
+// Snapshot and Cursor are opaque values produced by OnTableExportPlan.
+type OnTableExportChunkReq struct {
+	Snapshot string                 `json:"snapshot"`
+	Cursor   string                 `json:"cursor"`
+	Limit    int                    `json:"limit"`
+	Filters  map[string]interface{} `json:"filters"`
+}
+
+type OnTableExportChunkResp struct {
+	Rows interface{} `json:"rows"`
+}
+
 type TableGetRowsReq struct {
 	IDs []int64 `json:"ids"`
 }
@@ -37,6 +74,29 @@ func (c *TableGetRowsReq) GetIDs() []int64 {
 
 type TableGetRowsResp struct {
 	Rows interface{} `json:"rows"`
+}
+
+type TableGetDeletedRowsReq struct {
+	Page     int `json:"page"`
+	PageSize int `json:"page_size"`
+}
+
+type TableGetDeletedRowsResp struct {
+	Rows        interface{} `json:"rows"`
+	Total       int64       `json:"total"`
+	Page        int         `json:"page"`
+	PageSize    int         `json:"page_size"`
+	Table       string      `json:"table,omitempty"`
+	PackagePath string      `json:"package_path,omitempty"`
+}
+
+type TableRestoreRowsReq struct {
+	IDs []int64 `json:"ids"`
+}
+
+type TableRestoreRowsResp struct {
+	Rows     interface{} `json:"rows"`
+	Restored int64       `json:"restored"`
 }
 
 type OnTableUpdateRowReq struct {

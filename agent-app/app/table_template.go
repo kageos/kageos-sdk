@@ -2,10 +2,12 @@ package app
 
 type TableTemplate struct {
 	BaseConfig
-	AutoCrudTable     interface{} `json:"auto_crud_table"`
-	OnTableAddRow     OnTableAddRow
-	OnTableUpdateRow  OnTableUpdateRow
-	OnTableDeleteRows OnTableDeleteRows
+	AutoCrudTable      interface{} `json:"auto_crud_table"`
+	OnTableAddRow      OnTableAddRow
+	OnTableUpdateRow   OnTableUpdateRow
+	OnTableDeleteRows  OnTableDeleteRows
+	OnTableExportPlan  OnTableExportPlan
+	OnTableExportChunk OnTableExportChunk
 }
 
 func (t *TableTemplate) GetBaseConfig() *BaseConfig {

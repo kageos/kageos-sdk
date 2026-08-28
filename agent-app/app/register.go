@@ -193,6 +193,34 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 		}
 		logger.Debugf(ctx, "CallbackRouter %s success", req.Type)
 		return nil
+	case CallbackTypeSystemTableGetDeletedRows:
+		v, ok := router.Template.(*TableTemplate)
+		if !ok {
+			return errors.New("invalid type of TableTemplate")
+		}
+		var callbackReq callback.TableGetDeletedRowsReq
+		if err := json.Unmarshal(ctx.body, &callbackReq); err != nil {
+			return err
+		}
+		callbackResp, err := handleSystemTableGetDeletedRows(ctx, v, &callbackReq)
+		if err != nil {
+			return err
+		}
+		return resp.Form(callbackResp).Build()
+	case CallbackTypeSystemTableRestoreRows:
+		v, ok := router.Template.(*TableTemplate)
+		if !ok {
+			return errors.New("invalid type of TableTemplate")
+		}
+		var callbackReq callback.TableRestoreRowsReq
+		if err := json.Unmarshal(ctx.body, &callbackReq); err != nil {
+			return err
+		}
+		callbackResp, err := handleSystemTableRestoreRows(ctx, v, &callbackReq)
+		if err != nil {
+			return err
+		}
+		return resp.Form(callbackResp).Build()
 	case CallbackTypeOnTableAddRow:
 		v, ok := router.Template.(*TableTemplate)
 		if !ok {
@@ -263,6 +291,10 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 		if err != nil {
 			return err
 		}
+		if err := stampSystemSoftDeletedBy(ctx, v, onTableReq.GetIds()); err != nil {
+			// 删除已经成功，补写审计字段失败不能把成功响应伪装成删除失败。
+			logger.Errorf(ctx, "callback OnTableDeleteRows stamp deleted_by failed router:%s error:%s", req.Router, err.Error())
+		}
 		err = resp.Form(onTableResp).Build()
 		if err != nil {
 			logger.Errorf(ctx, "callback OnTableDeleteRows router:%s error:%s", req.Type, err.Error())
@@ -270,6 +302,49 @@ func (a *App) CallbackRouter(ctx *Context, resp response.Response) error {
 		}
 		logger.Debugf(ctx, "CallbackRouter OnTableDeleteRows success")
 		return nil
+	case CallbackTypeOnTableExportPlan:
+		v, ok := router.Template.(*TableTemplate)
+		if !ok {
+			return errors.New("invalid type of TableTemplate")
+		}
+		if v.OnTableExportPlan == nil || v.OnTableExportChunk == nil {
+			return errors.New("table export callbacks must be registered together")
+		}
+		var callbackReq callback.OnTableExportPlanReq
+		if err := json.Unmarshal(ctx.body, &callbackReq); err != nil {
+			return err
+		}
+		callbackResp, err := v.OnTableExportPlan(ctx, &callbackReq)
+		if err != nil {
+			return err
+		}
+		if callbackResp == nil || callbackResp.Total < 0 || callbackResp.Snapshot == "" {
+			return errors.New("OnTableExportPlan returned an invalid export plan")
+		}
+		return resp.Form(callbackResp).Build()
+	case CallbackTypeOnTableExportChunk:
+		v, ok := router.Template.(*TableTemplate)
+		if !ok {
+			return errors.New("invalid type of TableTemplate")
+		}
+		if v.OnTableExportPlan == nil || v.OnTableExportChunk == nil {
+			return errors.New("table export callbacks must be registered together")
+		}
+		var callbackReq callback.OnTableExportChunkReq
+		if err := json.Unmarshal(ctx.body, &callbackReq); err != nil {
+			return err
+		}
+		if callbackReq.Snapshot == "" || callbackReq.Cursor == "" || callbackReq.Limit < 1 {
+			return errors.New("OnTableExportChunk request is incomplete")
+		}
+		callbackResp, err := v.OnTableExportChunk(ctx, &callbackReq)
+		if err != nil {
+			return err
+		}
+		if callbackResp == nil || callbackResp.Rows == nil {
+			return errors.New("OnTableExportChunk returned no rows")
+		}
+		return resp.Form(callbackResp).Build()
 	case CallbackTypeOnSelectFuzzy:
 		var onCallback callback.OnSelectFuzzyReq
 		base := router.Template.GetBaseConfig()
@@ -322,6 +397,184 @@ func handleSystemTableGetRows(ctx *Context, template *TableTemplate, req *callba
 		return nil, fmt.Errorf("[系统错误]-[__table_get_rows] 查询旧值失败: %w", err)
 	}
 	return &callback.TableGetRowsResp{Rows: rowsPtr.Elem().Interface()}, nil
+}
+
+func handleSystemTableGetDeletedRows(ctx *Context, template *TableTemplate, req *callback.TableGetDeletedRowsReq) (*callback.TableGetDeletedRowsResp, error) {
+	model, db, err := systemSoftDeleteTable(ctx, template, CallbackTypeSystemTableGetDeletedRows)
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		req = &callback.TableGetDeletedRowsReq{}
+	}
+	page, pageSize := normalizeSystemDeletedRowsPage(req.Page, req.PageSize)
+	query := db.Unscoped().Model(model).Where("deleted_at IS NOT NULL")
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 查询已删除记录总数失败: %w", CallbackTypeSystemTableGetDeletedRows, err)
+	}
+	rowsPtr, err := newRowsSlicePtr(model)
+	if err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 构造查询结果失败: %w", CallbackTypeSystemTableGetDeletedRows, err)
+	}
+	if err := query.Order("deleted_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(rowsPtr.Interface()).Error; err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 查询已删除记录失败: %w", CallbackTypeSystemTableGetDeletedRows, err)
+	}
+	rows, err := systemRowsToVisibleMaps(rowsPtr.Elem())
+	if err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 序列化已删除记录失败: %w", CallbackTypeSystemTableGetDeletedRows, err)
+	}
+	statement := &gorm.Statement{DB: db}
+	tableName := ""
+	if err := statement.Parse(model); err == nil && statement.Schema != nil {
+		tableName = statement.Schema.Table
+	}
+	packagePath := ""
+	if ctx.routerInfo != nil && ctx.routerInfo.Options != nil {
+		packagePath = ctx.routerInfo.Options.PackagePath
+	}
+	return &callback.TableGetDeletedRowsResp{Rows: rows, Total: total, Page: page, PageSize: pageSize, Table: tableName, PackagePath: packagePath}, nil
+}
+
+func handleSystemTableRestoreRows(ctx *Context, template *TableTemplate, req *callback.TableRestoreRowsReq) (*callback.TableRestoreRowsResp, error) {
+	if req == nil || len(req.IDs) == 0 {
+		return nil, errors.New("[参数错误]-[__table_restore_rows] ids 不能为空")
+	}
+	ids := make([]int64, 0, len(req.IDs))
+	seen := make(map[int64]struct{}, len(req.IDs))
+	for _, id := range req.IDs {
+		if id <= 0 {
+			return nil, errors.New("[参数错误]-[__table_restore_rows] ids 必须为正整数")
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	model, db, err := systemSoftDeleteTable(ctx, template, CallbackTypeSystemTableRestoreRows)
+	if err != nil {
+		return nil, err
+	}
+	rowsPtr, err := newRowsSlicePtr(model)
+	if err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 构造恢复快照失败: %w", CallbackTypeSystemTableRestoreRows, err)
+	}
+	query := db.Unscoped().Model(model).Where("id IN ? AND deleted_at IS NOT NULL", ids)
+	if err := query.Find(rowsPtr.Interface()).Error; err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 查询待恢复记录失败: %w", CallbackTypeSystemTableRestoreRows, err)
+	}
+	rows, err := systemRowsToVisibleMaps(rowsPtr.Elem())
+	if err != nil {
+		return nil, fmt.Errorf("[系统错误]-[%s] 序列化恢复快照失败: %w", CallbackTypeSystemTableRestoreRows, err)
+	}
+	if len(rows) != len(ids) {
+		return nil, fmt.Errorf("[参数错误]-[%s] 部分记录不存在或未被删除", CallbackTypeSystemTableRestoreRows)
+	}
+	updates := map[string]interface{}{"deleted_at": nil}
+	statement := &gorm.Statement{DB: db}
+	if err := statement.Parse(model); err == nil && statement.Schema.LookUpField("DeletedBy") != nil {
+		updates["deleted_by"] = ""
+	}
+	result := db.Unscoped().Model(model).Where("id IN ? AND deleted_at IS NOT NULL", ids).Updates(updates)
+	if result.Error != nil {
+		return nil, fmt.Errorf("[业务错误]-[%s] 恢复记录失败，可能存在唯一值冲突: %w", CallbackTypeSystemTableRestoreRows, result.Error)
+	}
+	return &callback.TableRestoreRowsResp{Rows: rows, Restored: result.RowsAffected}, nil
+}
+
+func stampSystemSoftDeletedBy(ctx *Context, template *TableTemplate, ids []int) error {
+	if ctx == nil || template == nil || len(ids) == 0 {
+		return nil
+	}
+	deletedBy := strings.TrimSpace(ctx.GetRequestUser())
+	if deletedBy == "" {
+		return nil
+	}
+	model := template.EffectiveAutoCrudTable()
+	if model == nil {
+		return nil
+	}
+	db := ctx.GetGormDB()
+	if db == nil {
+		return errors.New("应用数据库不可用")
+	}
+	statement := &gorm.Statement{DB: db}
+	if err := statement.Parse(model); err != nil {
+		return fmt.Errorf("解析表结构失败: %w", err)
+	}
+	if statement.Schema.LookUpField("DeletedAt") == nil || statement.Schema.LookUpField("DeletedBy") == nil {
+		return nil
+	}
+	return db.Unscoped().Model(model).
+		Where("id IN ? AND deleted_at IS NOT NULL", ids).
+		Update("deleted_by", deletedBy).Error
+}
+
+func systemSoftDeleteTable(ctx *Context, template *TableTemplate, callbackType string) (interface{}, *gorm.DB, error) {
+	if template == nil {
+		return nil, nil, errors.New("invalid type of TableTemplate")
+	}
+	model := template.EffectiveAutoCrudTable()
+	if model == nil {
+		return nil, nil, fmt.Errorf("[系统错误]-[%s] 表格未配置 AutoCrudTable", callbackType)
+	}
+	if ctx == nil {
+		return nil, nil, fmt.Errorf("[系统错误]-[%s] 请求上下文不可用", callbackType)
+	}
+	db := ctx.GetGormDB()
+	if db == nil {
+		return nil, nil, fmt.Errorf("[系统错误]-[%s] 应用数据库不可用", callbackType)
+	}
+	statement := &gorm.Statement{DB: db}
+	if err := statement.Parse(model); err != nil {
+		return nil, nil, fmt.Errorf("[系统错误]-[%s] 解析表结构失败: %w", callbackType, err)
+	}
+	if statement.Schema.LookUpField("DeletedAt") == nil {
+		return nil, nil, fmt.Errorf("[业务错误]-[%s] 当前表格不支持软删除", callbackType)
+	}
+	return model, db, nil
+}
+
+func normalizeSystemDeletedRowsPage(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+
+func systemRowsToVisibleMaps(rows reflect.Value) ([]map[string]interface{}, error) {
+	result := make([]map[string]interface{}, 0, rows.Len())
+	for i := 0; i < rows.Len(); i++ {
+		row := rows.Index(i)
+		raw, err := json.Marshal(row.Interface())
+		if err != nil {
+			return nil, err
+		}
+		visible := make(map[string]interface{})
+		if err := json.Unmarshal(raw, &visible); err != nil {
+			return nil, err
+		}
+		for row.Kind() == reflect.Ptr {
+			row = row.Elem()
+		}
+		if row.Kind() == reflect.Struct {
+			if field := row.FieldByName("DeletedAt"); field.IsValid() && field.CanInterface() {
+				visible["deleted_at"] = field.Interface()
+			}
+			if field := row.FieldByName("DeletedBy"); field.IsValid() && field.CanInterface() {
+				visible["deleted_by"] = field.Interface()
+			}
+		}
+		result = append(result, visible)
+	}
+	return result, nil
 }
 
 func newRowsSlicePtr(model interface{}) (reflect.Value, error) {

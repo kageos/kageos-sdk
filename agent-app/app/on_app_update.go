@@ -337,6 +337,12 @@ func (a *App) buildApiInfo(info *routerInfo) (*ApiInfo, []interface{}, error) {
 		if template.OnTableDeleteRows != nil {
 			callback = append(callback, CallbackTypeOnTableDeleteRows)
 		}
+		if (template.OnTableExportPlan == nil) != (template.OnTableExportChunk == nil) {
+			errs = append(errs, fmt.Errorf("router %s must register OnTableExportPlan and OnTableExportChunk together", info.Router))
+		}
+		if template.OnTableExportPlan != nil && template.OnTableExportChunk != nil {
+			callback = append(callback, CallbackTypeOnTableExportPlan, CallbackTypeOnTableExportChunk)
+		}
 		api.Schema = functionschema.NewTable(requestFields, responseFields, callback)
 
 	case TemplateTypeForm:
