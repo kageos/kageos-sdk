@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/kageos/kageos-sdk/agent-app/env"
@@ -58,12 +57,22 @@ type App struct {
 	packageContexts map[string]*PackageContext
 
 	context.Context
-	// 运行中函数的计数
-	runningCount      int32
+	// shutdownMu 同时保护停机准入门禁和活动请求集合。
+	// 请求准入与 shutdownRequested 切换必须在同一把锁下完成，
+	// 否则旧版本可能在判断已排空后又放入新请求。
+	activeRequests    map[uint64]activeRequest
+	nextRequestID     uint64
 	shutdownRequested bool
-	shutdownMu        sync.RWMutex
+	closeStarted      bool
+	shutdownMu        sync.Mutex
 
 	//fileCache
+}
+
+type activeRequest struct {
+	TraceID   string
+	Router    string
+	StartedAt time.Time
 }
 
 // HTTP 方法常量已移除，直接使用字符串 "POST", "GET", "PUT", "DELETE" 即可
@@ -272,6 +281,7 @@ func newAppInstance(conn *nats.Conn) *App {
 		startTime:       time.Now(), // 记录启动时间
 		routerInfo:      make(map[string]*routerInfo),
 		packageContexts: make(map[string]*PackageContext),
+		activeRequests:  make(map[uint64]activeRequest),
 		subjects:        buildAppSubjects(),
 	}
 	newApp.transport = NewAppTransport(newApp.conn, newApp.subjects)
@@ -397,14 +407,14 @@ func (a *App) handleDiscovery(msg *nats.Msg) {
 func (a *App) Close() error {
 	logger.Infof(context.Background(), "App.Close() called")
 
-	if !a.markShutdownRequested() {
+	if !a.markCloseStarted() {
 		return nil
 	}
 
-	a.notifyCloseBestEffort()
 	a.unsubscribeAll()
-	a.closeNATSConnection()
 	a.cleanupRuntimeResources()
+	a.notifyCloseBestEffort()
+	a.closeNATSConnection()
 	a.closeExitSignal()
 
 	logger.Infof(context.Background(), "App.Close() completed, all resources released")
@@ -412,16 +422,16 @@ func (a *App) Close() error {
 	return nil
 }
 
-func (a *App) markShutdownRequested() bool {
+func (a *App) markCloseStarted() bool {
 	a.shutdownMu.Lock()
 	defer a.shutdownMu.Unlock()
 
-	if a.shutdownRequested {
-		logger.Infof(context.Background(), "Shutdown already in progress, skipping cleanup")
+	a.shutdownRequested = true
+	if a.closeStarted {
+		logger.Infof(context.Background(), "Close already in progress, skipping cleanup")
 		return false
 	}
-
-	a.shutdownRequested = true
+	a.closeStarted = true
 	return true
 }
 
@@ -526,7 +536,6 @@ func (a *App) handleShutdownCommand(message subjects.Message) {
 	}
 
 	a.waitForRuntimeShutdownDrain(ctx)
-	a.resetShutdownRequestedForCleanup()
 	a.closeAfterRuntimeShutdown(ctx)
 
 	logger.Infof(ctx, "Application shutdown initiated by runtime command")
@@ -546,20 +555,17 @@ func (a *App) markRuntimeShutdownRequested(ctx context.Context) bool {
 }
 
 func (a *App) waitForRuntimeShutdownDrain(ctx context.Context) {
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	if err := a.waitForAllFunctionsToComplete(shutdownCtx, 30*time.Second); err != nil {
-		logger.Warnf(ctx, "Some functions did not complete in time: %v", err)
+	requests := a.activeRequestSnapshot()
+	logger.Infof(ctx, "Application entered draining state: active_requests=%d", len(requests))
+	for _, request := range requests {
+		logger.Infof(ctx, "Draining active request: traceId=%s router=%s running_for=%s",
+			request.TraceID, request.Router, time.Since(request.StartedAt).Round(time.Second))
+	}
+	if err := a.waitForAllFunctionsToComplete(ctx); err != nil {
+		logger.Warnf(ctx, "Application drain interrupted: %v", err)
 	} else {
 		logger.Infof(ctx, "All functions completed successfully")
 	}
-}
-
-func (a *App) resetShutdownRequestedForCleanup() {
-	a.shutdownMu.Lock()
-	a.shutdownRequested = false // 临时重置，让 Close() 执行清理
-	a.shutdownMu.Unlock()
 }
 
 func (a *App) closeAfterRuntimeShutdown(ctx context.Context) {
@@ -568,48 +574,81 @@ func (a *App) closeAfterRuntimeShutdown(ctx context.Context) {
 	}
 }
 
-// incrementRunningCount 增加运行中函数计数
-func (a *App) incrementRunningCount() {
-	atomic.AddInt32(&a.runningCount, 1)
-}
-
-// decrementRunningCount 减少运行中函数计数
-func (a *App) decrementRunningCount() {
-	atomic.AddInt32(&a.runningCount, -1)
-}
-
 // getRunningCount 获取运行中函数的数量
-func (a *App) getRunningCount() int32 {
-	return atomic.LoadInt32(&a.runningCount)
+func (a *App) getRunningCount() int {
+	a.shutdownMu.Lock()
+	defer a.shutdownMu.Unlock()
+	return len(a.activeRequests)
 }
 
 // waitForAllFunctionsToComplete 等待所有函数完成
-func (a *App) waitForAllFunctionsToComplete(ctx context.Context, timeout time.Duration) error {
+func (a *App) waitForAllFunctionsToComplete(ctx context.Context) error {
 	logger.Debugf(ctx, "Waiting for all functions to complete...")
 
 	start := time.Now()
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	lastProgressLog := start
 
 	for {
+		count := a.getRunningCount()
+		if count == 0 {
+			logger.Infof(ctx, "All functions completed in %v", time.Since(start))
+			return nil
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			count := a.getRunningCount()
-			if count == 0 {
-				logger.Infof(ctx, "All functions completed in %v", time.Since(start))
-				return nil
+			if time.Since(lastProgressLog) >= 30*time.Second {
+				logger.Infof(ctx, "Application is draining: %d functions still running, elapsed=%s", count, time.Since(start).Round(time.Second))
+				lastProgressLog = time.Now()
 			}
-
-			if time.Since(start) > timeout {
-				logger.Warnf(ctx, "Timeout waiting for functions to complete, %d still running", count)
-				return fmt.Errorf("timeout waiting for %d functions to complete", count)
-			}
-
-			logger.Debugf(ctx, "Still waiting for %d functions to complete...", count)
 		}
 	}
+}
+
+// admitRequest 在停机门禁下原子地登记一个请求。
+// 返回 false 表示应用已进入 draining，调用方应该转向新版本。
+func (a *App) admitRequest(traceID, router string) (uint64, bool) {
+	a.shutdownMu.Lock()
+	defer a.shutdownMu.Unlock()
+
+	if a.shutdownRequested {
+		return 0, false
+	}
+	if a.activeRequests == nil {
+		a.activeRequests = make(map[uint64]activeRequest)
+	}
+	a.nextRequestID++
+	requestID := a.nextRequestID
+	a.activeRequests[requestID] = activeRequest{
+		TraceID:   traceID,
+		Router:    router,
+		StartedAt: time.Now(),
+	}
+	return requestID, true
+}
+
+func (a *App) finishRequest(requestID uint64) {
+	if requestID == 0 {
+		return
+	}
+	a.shutdownMu.Lock()
+	delete(a.activeRequests, requestID)
+	a.shutdownMu.Unlock()
+}
+
+func (a *App) activeRequestSnapshot() []activeRequest {
+	a.shutdownMu.Lock()
+	defer a.shutdownMu.Unlock()
+
+	requests := make([]activeRequest, 0, len(a.activeRequests))
+	for _, request := range a.activeRequests {
+		requests = append(requests, request)
+	}
+	return requests
 }
 
 // handleAppControlMessage 处理 App 控制消息（shutdown、onAppUpdate）。

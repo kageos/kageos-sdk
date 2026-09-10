@@ -28,20 +28,6 @@ func (a *App) handleMessage(msg *nats.Msg) {
 	start := time.Now()
 	ctx := context.Background()
 
-	// 检查是否已经请求关闭
-	a.shutdownMu.RLock()
-	if a.shutdownRequested {
-		a.shutdownMu.RUnlock()
-		logger.Warnf(ctx, "Shutdown requested, rejecting new request")
-		a.sendErrResponse(&dto.RequestAppResp{
-			TraceId: msg.Header.Get(contextx.TraceIdHeader),
-			Error:   "application is shutting down",
-			ErrCode: 1,
-		})
-		return
-	}
-	a.shutdownMu.RUnlock()
-
 	var req dto.RequestAppReq
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
 		a.sendErrResponse(&dto.RequestAppResp{Error: err.Error(), TraceId: msg.Header.Get(contextx.TraceIdHeader)})
@@ -113,13 +99,20 @@ func (a *App) handleMessage(msg *nats.Msg) {
 		req.ToolName = msg.Header.Get(contextx.ToolNameHeader)
 	}
 
+	requestID, admitted := a.admitRequest(req.TraceId, req.Router)
+	if !admitted {
+		logger.Warnf(ctx, "Application is draining, rejecting new request: traceId=%s router=%s", req.TraceId, req.Router)
+		a.sendErrResponse(&dto.RequestAppResp{
+			TraceId: req.TraceId,
+			Error:   "application is draining",
+			ErrCode: 1,
+		})
+		return
+	}
+	defer a.finishRequest(requestID)
+
 	logger.Debugf(ctx, "[SDK:handleMessage] received: traceId=%s, method=%s, router=%s, user=%s, source=%s, bodyLen=%d",
 		req.TraceId, req.Method, req.Router, req.RequestUser, req.ClientSource, len(req.Body))
-
-	// 增加运行中函数计数
-	a.incrementRunningCount()
-
-	defer a.decrementRunningCount()
 	resp, err := a.handle(&req)
 	elapsed := time.Since(start)
 	if err != nil {

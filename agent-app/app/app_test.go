@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/kageos/kageos-sdk/agent-app/env"
 	"github.com/kageos/kageos-sdk/pkg/subjects"
@@ -45,20 +47,6 @@ func TestBuildAppSubjects(t *testing.T) {
 	}
 }
 
-func TestMarkShutdownRequestedIsIdempotent(t *testing.T) {
-	app := &App{}
-
-	if ok := app.markShutdownRequested(); !ok {
-		t.Fatal("expected first shutdown mark to succeed")
-	}
-	if ok := app.markShutdownRequested(); ok {
-		t.Fatal("expected second shutdown mark to be skipped")
-	}
-	if !app.shutdownRequested {
-		t.Fatal("expected shutdownRequested to stay true")
-	}
-}
-
 func TestCloseExitSignalIsIdempotent(t *testing.T) {
 	app := &App{
 		exit: make(chan struct{}),
@@ -79,7 +67,7 @@ func TestCloseExitSignalIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRuntimeShutdownRequestedCanBeResetForCleanup(t *testing.T) {
+func TestRuntimeShutdownKeepsAdmissionClosedThroughCleanup(t *testing.T) {
 	app := &App{}
 	ctx := context.Background()
 
@@ -92,9 +80,92 @@ func TestRuntimeShutdownRequestedCanBeResetForCleanup(t *testing.T) {
 	if !app.shutdownRequested {
 		t.Fatal("expected shutdownRequested to be true")
 	}
+	if _, admitted := app.admitRequest("late-request", "/late.form"); admitted {
+		t.Fatal("expected requests to stay rejected while cleanup starts")
+	}
+}
 
-	app.resetShutdownRequestedForCleanup()
-	if app.shutdownRequested {
-		t.Fatal("expected shutdownRequested to be reset before cleanup")
+func TestRuntimeShutdownWaitsForAdmittedRequests(t *testing.T) {
+	app := &App{}
+	requestID, admitted := app.admitRequest("trace-1", "/slow.form")
+	if !admitted {
+		t.Fatal("expected request to be admitted before drain")
+	}
+
+	if ok := app.markRuntimeShutdownRequested(context.Background()); !ok {
+		t.Fatal("expected drain to start")
+	}
+	if _, admitted := app.admitRequest("trace-2", "/new.form"); admitted {
+		t.Fatal("expected new request to be rejected after drain starts")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.waitForAllFunctionsToComplete(context.Background())
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("drain returned before active request finished: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	app.finishRequest(requestID)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("drain failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain did not finish after active request completed")
+	}
+}
+
+func TestAdmissionAndDrainAreAtomic(t *testing.T) {
+	for iteration := 0; iteration < 200; iteration++ {
+		app := &App{}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			<-start
+			if requestID, admitted := app.admitRequest("trace", "/race.form"); admitted {
+				app.finishRequest(requestID)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			app.markRuntimeShutdownRequested(context.Background())
+		}()
+
+		close(start)
+		wg.Wait()
+
+		if app.getRunningCount() != 0 {
+			t.Fatalf("iteration %d left an untracked active request", iteration)
+		}
+		if _, admitted := app.admitRequest("late", "/late.form"); admitted {
+			t.Fatalf("iteration %d admitted a request after drain", iteration)
+		}
+	}
+}
+
+func TestActiveRequestSnapshotIncludesRequestMetadata(t *testing.T) {
+	app := &App{}
+	requestID, admitted := app.admitRequest("trace-1", "/report.form")
+	if !admitted {
+		t.Fatal("expected request admission")
+	}
+	defer app.finishRequest(requestID)
+
+	requests := app.activeRequestSnapshot()
+	if len(requests) != 1 {
+		t.Fatalf("active requests = %d, want 1", len(requests))
+	}
+	if requests[0].TraceID != "trace-1" || requests[0].Router != "/report.form" || requests[0].StartedAt.IsZero() {
+		t.Fatalf("unexpected active request snapshot: %#v", requests[0])
 	}
 }

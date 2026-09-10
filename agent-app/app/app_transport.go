@@ -188,6 +188,9 @@ func (t *AppTransport) publishLifecycleEvent(messageType string, data map[string
 	if err := t.conn.Publish(t.subjects.LifecycleEvent, messageData); err != nil {
 		return fmt.Errorf("publish lifecycle event %s to %s: %w", messageType, t.subjects.LifecycleEvent, err)
 	}
+	if err := t.conn.FlushTimeout(5 * time.Second); err != nil {
+		return fmt.Errorf("flush lifecycle event %s to %s: %w", messageType, t.subjects.LifecycleEvent, err)
+	}
 
 	logger.Debugf(context.Background(), "Lifecycle event %s sent to subject: %s", messageType, t.subjects.LifecycleEvent)
 	return nil
